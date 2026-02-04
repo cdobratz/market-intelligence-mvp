@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 STOCK_DATA_SCHEMA = pa.DataFrameSchema(
     {
-        "open": Column(float, checks=pa.Check.ge(0)),
-        "high": Column(float, checks=pa.Check.ge(0)),
-        "low": Column(float, checks=pa.Check.ge(0)),
-        "close": Column(float, checks=pa.Check.ge(0)),
-        "volume": Column(float, checks=pa.Check.ge(0)),
+        "open": Column(float, checks=pa.Check.ge(0), nullable=True),
+        "high": Column(float, checks=pa.Check.ge(0), nullable=True),
+        "low": Column(float, checks=pa.Check.ge(0), nullable=True),
+        "close": Column(float, checks=pa.Check.ge(0), nullable=True),
+        "volume": Column(float, checks=pa.Check.ge(0), nullable=True),
         "symbol": Column(str, checks=pa.Check.str_length(1, 5)),
     },
-    index=Index(pd.DatetimeIndex, name="date"),
+    index=Index(pa.DateTime, name="date"),
     strict=False,
     coerce=True,
 )
@@ -45,7 +45,7 @@ FOREX_DATA_SCHEMA = pa.DataFrameSchema(
         "close": Column(float, checks=pa.Check.ge(0)),
         "pair": Column(str, checks=pa.Check.str_length(6, 6)),
     },
-    index=Index(pd.DatetimeIndex, name="date"),
+    index=Index(pa.DateTime, name="date"),
     strict=False,
     coerce=True,
 )
@@ -57,7 +57,7 @@ CRYPTO_DATA_SCHEMA = pa.DataFrameSchema(
         "volume": Column(float, checks=pa.Check.ge(0), required=False),
         "coin_id": Column(str),
     },
-    index=Index(pd.DatetimeIndex, name="timestamp"),
+    index=Index(pa.DateTime, name="timestamp"),
     strict=False,
     coerce=True,
 )
@@ -68,7 +68,7 @@ NEWS_DATA_SCHEMA = pa.DataFrameSchema(
         "description": Column(str, required=False),
         "url": Column(str),
         "source": Column(str),
-        "publishedAt": Column(pd.DatetimeIndex),
+        "publishedAt": Column(pa.DateTime),
     },
     strict=False,
     coerce=True,
@@ -146,11 +146,15 @@ class DataValidator:
             report["checks"]["outliers"] = "none"
 
         # Date continuity check
-        if len(df) > 1:
-            date_diffs = df.index.to_series().diff().dt.days.value_counts()
-            expected_diff = 1  # Daily data
-            if not date_diffs.index.contains(expected_diff):
-                report["warnings"].append("Missing trading days detected")
+        if len(df) > 1 and hasattr(df.index, 'to_series'):
+            try:
+                date_diffs = df.index.to_series().diff().dt.days.value_counts()
+                expected_diff = 1  # Daily data
+                if expected_diff not in date_diffs.index:
+                    report["warnings"].append("Missing trading days detected")
+            except (AttributeError, TypeError):
+                # Skip date continuity check if index is not datetime
+                pass
 
         is_valid = len(report["errors"]) == 0
         report["is_valid"] = is_valid

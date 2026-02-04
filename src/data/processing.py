@@ -80,7 +80,7 @@ class DataProcessor:
         Returns:
             DataFrame with engineered features
         """
-        from ..features import engineer_features as eng_features
+        from features.timeseries import engineer_features as eng_features
         
         return eng_features(df, config)
     

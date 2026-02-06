@@ -338,6 +338,157 @@ def generate_training_data(
     return train_df, test_df
 
 
+def create_targets(df: pd.DataFrame, close_col: str = "close") -> pd.DataFrame:
+    """
+    Create multiple target variables for different prediction horizons.
+
+    This function engineers better prediction targets than raw returns,
+    including volatility-adjusted returns and triple barrier labels.
+
+    Args:
+        df: DataFrame with price data
+        close_col: Name of close price column
+
+    Returns:
+        DataFrame with additional target columns
+    """
+    result = df.copy()
+    close = result[close_col]
+
+    # 1. Forward returns (various horizons)
+    for horizon in [1, 5, 10, 20]:
+        result[f'return_{horizon}d'] = close.pct_change(horizon).shift(-horizon)
+
+    # 2. Volatility (for risk-adjusted calculations)
+    result['vol_20d'] = close.pct_change().rolling(20).std()
+
+    # 3. Risk-adjusted returns (Sharpe-like)
+    result['risk_adj_return_5d'] = result['return_5d'] / result['vol_20d'].replace(0, np.nan)
+
+    # 4. Binary direction (smoothed)
+    result['direction_1d'] = (result['return_1d'] > 0).astype(int)
+    result['direction_5d'] = (result['return_5d'] > 0).astype(int)
+
+    # 5. Triple barrier labeling
+    result['triple_barrier'] = create_triple_barrier_labels(
+        close,
+        take_profit=0.02,  # 2% profit target
+        stop_loss=0.01,    # 1% stop loss
+        max_holding=10     # Max 10 days
+    )
+
+    # 6. Multi-class direction (Up/Down/Neutral)
+    def classify_return(ret: float, threshold: float = 0.005) -> int:
+        if pd.isna(ret):
+            return 0  # Neutral
+        elif ret > threshold:
+            return 1  # Up
+        elif ret < -threshold:
+            return -1  # Down
+        else:
+            return 0  # Neutral
+
+    result['direction_class_5d'] = result['return_5d'].apply(
+        lambda x: classify_return(x, 0.005)
+    )
+
+    logger.info(f"Created target variables: {[c for c in result.columns if 'return' in c or 'direction' in c or 'barrier' in c]}")
+
+    return result
+
+
+def create_triple_barrier_labels(
+    prices: pd.Series,
+    take_profit: float = 0.02,
+    stop_loss: float = 0.01,
+    max_holding: int = 10
+) -> pd.Series:
+    """
+    Create labels based on which barrier is hit first.
+
+    Triple barrier labeling is the industry-standard approach for ML trading
+    signals. It creates labels based on three exit conditions:
+    - Take profit barrier (upper horizontal barrier)
+    - Stop loss barrier (lower horizontal barrier)
+    - Time barrier (vertical barrier)
+
+    Args:
+        prices: Price series
+        take_profit: Take profit threshold as decimal (e.g., 0.02 = 2%)
+        stop_loss: Stop loss threshold as decimal (e.g., 0.01 = 1%)
+        max_holding: Maximum holding period in days
+
+    Returns:
+        Series with labels: 1 = take profit hit, -1 = stop loss hit, 0 = time expired
+    """
+    labels = []
+
+    for i in range(len(prices)):
+        if i + max_holding >= len(prices):
+            # Not enough future data
+            labels.append(np.nan)
+            continue
+
+        entry = prices.iloc[i]
+        future = prices.iloc[i + 1:i + max_holding + 1]
+
+        # Calculate returns from entry
+        returns = (future - entry) / entry
+
+        # Find first barrier hit
+        tp_hits = returns >= take_profit
+        sl_hits = returns <= -stop_loss
+
+        tp_first = tp_hits.idxmax() if tp_hits.any() else None
+        sl_first = sl_hits.idxmax() if sl_hits.any() else None
+
+        if tp_first is not None and sl_first is not None:
+            # Both barriers were hit, which was first?
+            if tp_first <= sl_first:
+                labels.append(1)  # Take profit
+            else:
+                labels.append(-1)  # Stop loss
+        elif tp_first is not None:
+            labels.append(1)  # Take profit
+        elif sl_first is not None:
+            labels.append(-1)  # Stop loss
+        else:
+            labels.append(0)  # Time expired
+
+    return pd.Series(labels, index=prices.index)
+
+
+def create_meta_labels(
+    primary_predictions: pd.Series,
+    actual_returns: pd.Series,
+    threshold: float = 0.0
+) -> pd.Series:
+    """
+    Create meta-labels for bet sizing.
+
+    Meta-labeling is used to train a secondary model that predicts
+    whether the primary model's prediction will be correct.
+
+    Args:
+        primary_predictions: Predictions from primary model
+        actual_returns: Actual returns
+        threshold: Threshold for considering a prediction correct
+
+    Returns:
+        Series with 1 if primary prediction was correct, 0 otherwise
+    """
+    # Primary model predicted direction
+    pred_direction = np.sign(primary_predictions)
+
+    # Actual direction
+    actual_direction = np.sign(actual_returns)
+
+    # Meta-label: 1 if prediction direction was correct
+    meta_labels = (pred_direction == actual_direction).astype(int)
+
+    return pd.Series(meta_labels, index=primary_predictions.index)
+
+
 if __name__ == "__main__":
     # Generate sample data
     train_df, test_df = generate_training_data(

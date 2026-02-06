@@ -6,21 +6,14 @@ It creates realistic OHLCV (Open, High, Low, Close, Volume) data with trends,
 seasonality, and noise, then applies the feature engineering pipeline.
 """
 
-import numpy as np
-import pandas as pd
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Tuple, Optional
-import logging
+
+import numpy as np
+import pandas as pd
 
 from src.features.timeseries import engineer_features
-from src.features.technical_indicators import (
-    calculate_rsi,
-    calculate_macd,
-    calculate_bollinger_bands,
-    calculate_sma,
-    calculate_ema,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +28,7 @@ class SyntheticMarketDataGenerator:
         n_days: int = 1000,
         trend: float = 0.0001,
         volatility: float = 0.02,
-        random_seed: Optional[int] = 42,
+        random_seed: int | None = 42,
     ):
         """
         Initialize the data generator.
@@ -75,7 +68,7 @@ class SyntheticMarketDataGenerator:
         return pd.Series(prices)
 
     def generate_ohlcv_data(
-        self, symbol: str = "SYN", start_date: Optional[datetime] = None
+        self, symbol: str = "SYN", start_date: datetime | None = None
     ) -> pd.DataFrame:
         """
         Generate synthetic OHLCV data.
@@ -134,7 +127,7 @@ class SyntheticMarketDataGenerator:
         return df
 
     def generate_multi_asset_data(
-        self, symbols: list[str], correlations: Optional[np.ndarray] = None
+        self, symbols: list[str], correlations: np.ndarray | None = None
     ) -> pd.DataFrame:
         """
         Generate synthetic data for multiple assets with optional correlations.
@@ -238,7 +231,7 @@ def generate_training_data(
     n_samples: int = 1000,
     n_symbols: int = 5,
     train_ratio: float = 0.8,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Generate complete training and test datasets with engineered features.
 

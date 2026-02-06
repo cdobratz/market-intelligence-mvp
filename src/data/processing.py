@@ -8,15 +8,16 @@ Provides factory pattern for switching between processing backends:
 Both backends provide identical API for seamless switching.
 """
 
-from typing import Literal, Optional, Dict, Any
-import pandas as pd
 import logging
+from typing import Any, Literal
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 # Try to import Fireducks
 try:
-    import fireducks.pandas as fd
+    import fireducks.pandas as fd  # noqa: F401 - Used for benchmarking
     FIREDUCKS_AVAILABLE = True
 except ImportError:
     FIREDUCKS_AVAILABLE = False
@@ -25,37 +26,37 @@ except ImportError:
 class DataProcessor:
     """
     Base class for data processing
-    
+
     Defines unified interface for feature engineering pipeline
     """
-    
+
     def __init__(self, backend: Literal["pandas", "fireducks"] = "pandas"):
         """
         Initialize processor
-        
+
         Args:
             backend: Processing backend ('pandas' or 'fireducks')
         """
         self.backend = backend
         self._validate_backend()
-    
+
     def _validate_backend(self) -> None:
         """Validate backend availability"""
         if self.backend == "fireducks" and not FIREDUCKS_AVAILABLE:
             logger.warning(
-                f"Fireducks not available, falling back to pandas. "
-                f"Install with: pip install fireducks"
+                "Fireducks not available, falling back to pandas. "
+                "Install with: pip install fireducks"
             )
             self.backend = "pandas"
-    
+
     def load_data(self, path: str, **kwargs) -> pd.DataFrame:
         """
         Load data from Parquet file
-        
+
         Args:
             path: Path to Parquet file
             **kwargs: Additional arguments
-            
+
         Returns:
             DataFrame
         """
@@ -64,45 +65,45 @@ class DataProcessor:
             return fd.read_parquet(path, **kwargs)
         else:
             return pd.read_parquet(path, **kwargs)
-    
+
     def engineer_features(
         self,
         df: pd.DataFrame,
-        config: Optional[Dict[str, Any]] = None
+        config: dict[str, Any] | None = None
     ) -> pd.DataFrame:
         """
         Engineer features on data
-        
+
         Args:
             df: Input DataFrame
             config: Feature configuration
-            
+
         Returns:
             DataFrame with engineered features
         """
         from features.timeseries import engineer_features as eng_features
-        
+
         return eng_features(df, config)
-    
+
     def validate_data(
         self,
         df: pd.DataFrame,
         data_type: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate data quality
-        
+
         Args:
             df: Input DataFrame
             data_type: Type of data (stocks, forex, crypto, news)
-            
+
         Returns:
             Validation report
         """
         from .validation import DataValidator
-        
+
         validator = DataValidator()
-        
+
         if data_type == "stocks":
             return validator.validate_stock_data(df, "unknown")[1]
         elif data_type == "forex":
@@ -113,7 +114,7 @@ class DataProcessor:
             return validator.validate_news_data(df)[1]
         else:
             return {"error": f"Unknown data type: {data_type}"}
-    
+
     def __repr__(self) -> str:
         """String representation"""
         return f"DataProcessor(backend='{self.backend}')"
@@ -121,7 +122,7 @@ class DataProcessor:
 
 class PandasProcessor(DataProcessor):
     """Pandas-based data processor"""
-    
+
     def __init__(self):
         """Initialize Pandas processor"""
         super().__init__(backend="pandas")
@@ -129,7 +130,7 @@ class PandasProcessor(DataProcessor):
 
 class FireducksProcessor(DataProcessor):
     """Fireducks-based data processor"""
-    
+
     def __init__(self):
         """Initialize Fireducks processor"""
         if not FIREDUCKS_AVAILABLE:
@@ -142,13 +143,13 @@ def get_processor(
 ) -> DataProcessor:
     """
     Get data processor instance
-    
+
     Factory function for creating appropriate processor
-    
+
     Args:
         backend: Backend choice ('pandas', 'fireducks', or 'auto')
                 'auto' selects fireducks if available, otherwise pandas
-                
+
     Returns:
         DataProcessor instance
     """
@@ -175,56 +176,56 @@ def load_and_validate(
 ) -> tuple:
     """
     Load and validate data in one step
-    
+
     Args:
         path: Path to Parquet file
         data_type: Type of data
         backend: Processing backend
-        
+
     Returns:
         Tuple of (data, validation_report)
     """
     processor = get_processor(backend)
-    
+
     logger.info(f"Loading data using {processor.backend}...")
     data = processor.load_data(path)
-    
+
     logger.info("Validating data...")
     report = processor.validate_data(data, data_type)
-    
+
     return data, report
 
 
 def load_and_engineer(
     path: str,
-    config: Optional[Dict[str, Any]] = None,
+    config: dict[str, Any] | None = None,
     backend: str = "auto"
 ) -> pd.DataFrame:
     """
     Load and engineer features in one step
-    
+
     Args:
         path: Path to Parquet file
         config: Feature configuration
         backend: Processing backend
-        
+
     Returns:
         DataFrame with engineered features
     """
     processor = get_processor(backend)
-    
+
     logger.info(f"Loading data using {processor.backend}...")
     data = processor.load_data(path)
-    
+
     logger.info("Engineering features...")
     features = processor.engineer_features(data, config)
-    
+
     return features
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    
+
     # Example usage
     logger.info("Creating sample data...")
     df = pd.DataFrame({
@@ -236,18 +237,18 @@ if __name__ == "__main__":
         "close": range(100, 200),
         "volume": range(1000000, 1000000 + 100),
     })
-    
+
     # Test with Pandas
     logger.info("\nTesting Pandas processor...")
     pandas_proc = PandasProcessor()
     logger.info(f"Processor: {pandas_proc}")
-    
+
     # Test with Fireducks (if available)
     if FIREDUCKS_AVAILABLE:
         logger.info("\nTesting Fireducks processor...")
         fireducks_proc = FireducksProcessor()
         logger.info(f"Processor: {fireducks_proc}")
-    
+
     # Test auto-selection
     logger.info("\nTesting auto processor...")
     auto_proc = get_processor("auto")

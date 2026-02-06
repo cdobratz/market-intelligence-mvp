@@ -5,19 +5,21 @@ This module provides abstract base classes and utilities for regression models
 that predict continuous values (e.g., price changes, returns).
 """
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
-from pathlib import Path
-import pandas as pd
-import numpy as np
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.model_selection import TimeSeriesSplit
-import mlflow
-import mlflow.sklearn
-import joblib
 import json
 import logging
+from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import joblib
+import mlflow.sklearn
+import numpy as np
+import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
+
+import mlflow
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,7 +31,7 @@ class BaseRegressionModel(ABC):
     def __init__(
         self,
         model_name: str,
-        hyperparameters: Optional[Dict[str, Any]] = None,
+        hyperparameters: dict[str, Any] | None = None,
         random_state: int = 42,
     ):
         """
@@ -44,8 +46,8 @@ class BaseRegressionModel(ABC):
         self.hyperparameters = hyperparameters or {}
         self.random_state = random_state
         self.model = None
-        self.feature_names: Optional[list[str]] = None
-        self.training_metadata: Dict[str, Any] = {}
+        self.feature_names: list[str] | None = None
+        self.training_metadata: dict[str, Any] = {}
 
     @abstractmethod
     def _create_model(self) -> Any:
@@ -61,8 +63,8 @@ class BaseRegressionModel(ABC):
         self,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        X_val: Optional[pd.DataFrame] = None,
-        y_val: Optional[pd.Series] = None,
+        X_val: pd.DataFrame | None = None,
+        y_val: pd.Series | None = None,
     ) -> "BaseRegressionModel":
         """
         Train the regression model.
@@ -146,7 +148,7 @@ class BaseRegressionModel(ABC):
 
     def evaluate(
         self, X: pd.DataFrame, y: pd.Series, dataset_name: str = "test"
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Evaluate the model and return metrics.
 
@@ -197,7 +199,7 @@ class BaseRegressionModel(ABC):
 
     def cross_validate(
         self, X: pd.DataFrame, y: pd.Series, n_splits: int = 5
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Perform time-series cross-validation.
 
@@ -248,7 +250,7 @@ class BaseRegressionModel(ABC):
 
         return results
 
-    def get_feature_importance(self) -> Optional[pd.DataFrame]:
+    def get_feature_importance(self) -> pd.DataFrame | None:
         """
         Get feature importance if available.
 
@@ -327,7 +329,7 @@ class BaseRegressionModel(ABC):
 
         # Load metadata
         metadata_path = model_path / f"{self.model_name.lower().replace(' ', '_')}_metadata.json"
-        with open(metadata_path, "r") as f:
+        with open(metadata_path) as f:
             metadata = json.load(f)
 
         self.feature_names = metadata["feature_names"]
@@ -340,9 +342,9 @@ class BaseRegressionModel(ABC):
     def log_to_mlflow(
         self,
         experiment_name: str,
-        run_name: Optional[str] = None,
-        metrics: Optional[Dict[str, float]] = None,
-        artifacts_dir: Optional[str] = None,
+        run_name: str | None = None,
+        metrics: dict[str, float] | None = None,
+        artifacts_dir: str | None = None,
     ) -> str:
         """
         Log model and metrics to MLflow.
@@ -408,7 +410,7 @@ def walk_forward_validation(
     n_splits: int = 5,
     test_size: int = 30,
     gap: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Walk-forward validation that simulates real trading conditions.
 
@@ -537,7 +539,7 @@ def expanding_window_backtest(
     initial_train_size: int = 100,
     step_size: int = 1,
     retrain_frequency: int = 20,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Expanding window backtest with configurable retraining frequency.
 

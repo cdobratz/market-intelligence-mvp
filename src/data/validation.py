@@ -9,14 +9,15 @@ This module provides comprehensive data quality validation including:
 - Data profiling and validation reports
 """
 
-from typing import Dict, List, Tuple, Any, Optional
-from datetime import datetime, timedelta
-import pandas as pd
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 import numpy as np
+import pandas as pd
 import pandera as pa
 from pandera import Column, Index
-import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ NEWS_DATA_SCHEMA = pa.DataFrameSchema(
 class DataValidator:
     """
     Comprehensive data validation class for financial data
-    
+
     Attributes:
         validation_results: Dictionary storing validation outcomes
         data_profiles: Dictionary storing data statistics
@@ -86,18 +87,18 @@ class DataValidator:
 
     def __init__(self) -> None:
         """Initialize validator with empty results and profiles"""
-        self.validation_results: Dict[str, Any] = {}
-        self.data_profiles: Dict[str, pd.DataFrame] = {}
-        self.validation_errors: Dict[str, List[str]] = {}
+        self.validation_results: dict[str, Any] = {}
+        self.data_profiles: dict[str, pd.DataFrame] = {}
+        self.validation_errors: dict[str, list[str]] = {}
 
-    def validate_stock_data(self, df: pd.DataFrame, symbol: str) -> Tuple[bool, Dict[str, Any]]:
+    def validate_stock_data(self, df: pd.DataFrame, symbol: str) -> tuple[bool, dict[str, Any]]:
         """
         Validate stock data against schema and business rules
-        
+
         Args:
             df: Stock data DataFrame with OHLCV data
             symbol: Stock ticker symbol
-            
+
         Returns:
             Tuple of (is_valid, validation_report)
         """
@@ -161,14 +162,14 @@ class DataValidator:
 
         return is_valid, report
 
-    def validate_forex_data(self, df: pd.DataFrame, pair: str) -> Tuple[bool, Dict[str, Any]]:
+    def validate_forex_data(self, df: pd.DataFrame, pair: str) -> tuple[bool, dict[str, Any]]:
         """
         Validate forex data
-        
+
         Args:
             df: Forex data DataFrame
             pair: Currency pair (e.g., 'EURUSD')
-            
+
         Returns:
             Tuple of (is_valid, validation_report)
         """
@@ -212,14 +213,14 @@ class DataValidator:
 
         return is_valid, report
 
-    def validate_crypto_data(self, df: pd.DataFrame, coin_id: str) -> Tuple[bool, Dict[str, Any]]:
+    def validate_crypto_data(self, df: pd.DataFrame, coin_id: str) -> tuple[bool, dict[str, Any]]:
         """
         Validate cryptocurrency data
-        
+
         Args:
             df: Crypto data DataFrame
             coin_id: Coin identifier (e.g., 'bitcoin')
-            
+
         Returns:
             Tuple of (is_valid, validation_report)
         """
@@ -262,13 +263,13 @@ class DataValidator:
 
         return is_valid, report
 
-    def validate_news_data(self, df: pd.DataFrame) -> Tuple[bool, Dict[str, Any]]:
+    def validate_news_data(self, df: pd.DataFrame) -> tuple[bool, dict[str, Any]]:
         """
         Validate news data
-        
+
         Args:
             df: News data DataFrame
-            
+
         Returns:
             Tuple of (is_valid, validation_report)
         """
@@ -325,18 +326,18 @@ class DataValidator:
 
     @staticmethod
     def _detect_outliers(
-        df: pd.DataFrame, 
-        method: str = "iqr", 
+        df: pd.DataFrame,
+        method: str = "iqr",
         threshold: float = 1.5
     ) -> np.ndarray:
         """
         Detect outliers using IQR method
-        
+
         Args:
             df: DataFrame with numeric columns
             method: Detection method ('iqr' or 'zscore')
             threshold: IQR multiplier (default 1.5)
-            
+
         Returns:
             Array of boolean values indicating outliers
         """
@@ -348,22 +349,22 @@ class DataValidator:
             upper_bound = Q3 + threshold * IQR
             outliers = ((df < lower_bound) | (df > upper_bound)).any(axis=1).values
             return np.where(outliers)[0]
-        
+
         elif method == "zscore":
             z_scores = np.abs((df - df.mean()) / df.std())
             outliers = (z_scores > 3).any(axis=1).values
             return np.where(outliers)[0]
-        
+
         return np.array([])
 
     def get_data_profile(self, df: pd.DataFrame, name: str) -> pd.DataFrame:
         """
         Generate statistical profile of data
-        
+
         Args:
             df: Input DataFrame
             name: Profile name
-            
+
         Returns:
             DataFrame with statistics
         """
@@ -407,17 +408,17 @@ class DataValidator:
         return profile_df
 
     def generate_validation_report(
-        self, 
-        validation_reports: List[Dict[str, Any]],
-        output_path: Optional[Path] = None
-    ) -> Dict[str, Any]:
+        self,
+        validation_reports: list[dict[str, Any]],
+        output_path: Path | None = None
+    ) -> dict[str, Any]:
         """
         Generate comprehensive validation report
-        
+
         Args:
             validation_reports: List of validation reports
             output_path: Optional path to save report as JSON
-            
+
         Returns:
             Summary validation report
         """
@@ -447,18 +448,18 @@ class DataValidator:
         self,
         df: pd.DataFrame,
         date_column: str,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
-    ) -> Dict[str, Any]:
+        start_date: datetime | None = None,
+        end_date: datetime | None = None
+    ) -> dict[str, Any]:
         """
         Validate data falls within expected date range
-        
+
         Args:
             df: Input DataFrame
             date_column: Name of date column
             start_date: Minimum expected date
             end_date: Maximum expected date
-            
+
         Returns:
             Validation report
         """
@@ -493,17 +494,17 @@ class DataValidator:
     def check_data_completeness(
         self,
         df: pd.DataFrame,
-        required_columns: List[str],
+        required_columns: list[str],
         min_rows: int = 0
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Check if data meets completeness requirements
-        
+
         Args:
             df: Input DataFrame
             required_columns: List of required columns
             min_rows: Minimum number of rows required
-            
+
         Returns:
             Completeness check report
         """
@@ -532,14 +533,14 @@ class DataValidator:
 def validate_pipeline_data(
     data_path: Path,
     data_type: str
-) -> Tuple[bool, Dict[str, Any]]:
+) -> tuple[bool, dict[str, Any]]:
     """
     Validate data from pipeline
-    
+
     Args:
         data_path: Path to Parquet files
         data_type: Type of data (stocks, forex, crypto, news)
-        
+
     Returns:
         Tuple of (is_valid, validation_report)
     """
@@ -549,7 +550,7 @@ def validate_pipeline_data(
     try:
         # Find all parquet files
         parquet_files = list(data_path.glob("**/*.parquet"))
-        
+
         if not parquet_files:
             return False, {"error": f"No parquet files found in {data_path}"}
 
@@ -583,7 +584,7 @@ def validate_pipeline_data(
 if __name__ == "__main__":
     # Example usage
     logging.basicConfig(level=logging.INFO)
-    
+
     # Create sample data
     dates = pd.date_range("2024-01-01", periods=100)
     sample_stock = pd.DataFrame({
@@ -600,7 +601,7 @@ if __name__ == "__main__":
     is_valid, report = validator.validate_stock_data(sample_stock, "AAPL")
     print(f"Validation passed: {is_valid}")
     print(f"Report: {report}")
-    
+
     # Get profile
     profile = validator.get_data_profile(sample_stock, "sample_stock")
     print(f"\nData Profile:\n{profile}")

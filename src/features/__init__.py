@@ -9,13 +9,14 @@ This module provides:
 - Feature selection utilities
 """
 
-from typing import Callable, Any, Optional
-import pandas as pd
-import numpy as np
 import hashlib
-import pickle
 import logging
 import os
+import pickle
+from collections.abc import Callable
+from typing import Optional
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class FeatureCache:
 
     def __init__(
         self,
-        redis_url: Optional[str] = None,
+        redis_url: str | None = None,
         ttl: int = 86400,  # 24 hours
         enabled: bool = True,
     ):
@@ -210,7 +211,7 @@ class FeatureCache:
 
 
 # Global cache instance (lazy initialization)
-_feature_cache: Optional[FeatureCache] = None
+_feature_cache: FeatureCache | None = None
 
 
 def get_feature_cache() -> FeatureCache:
@@ -242,29 +243,28 @@ def cached_feature_engineering(
 
 
 # Re-export commonly used functions for convenience
-from src.features.technical_indicators import (
-    calculate_rsi,
-    calculate_macd,
-    calculate_bollinger_bands,
-    calculate_sma,
-    calculate_ema,
-    calculate_atr,
-    calculate_all_indicators_vectorized,
-)
-
-from src.features.timeseries import engineer_features
-
-from src.features.sentiment import (
+# noqa: E402 - Intentional lazy imports after class definitions to avoid circular dependencies
+from src.features.sentiment import (  # noqa: E402
+    NewsProcessor,
     SentimentAnalyzer,
     extract_sentiment_features,
-    NewsProcessor,
 )
+from src.features.technical_indicators import (  # noqa: E402
+    calculate_all_indicators_vectorized,
+    calculate_atr,
+    calculate_bollinger_bands,
+    calculate_ema,
+    calculate_macd,
+    calculate_rsi,
+    calculate_sma,
+)
+from src.features.timeseries import engineer_features  # noqa: E402
 
 # Conditionally export TransformerSentimentAnalyzer
 try:
-    from src.features.sentiment import TransformerSentimentAnalyzer
+    from src.features.sentiment import TransformerSentimentAnalyzer  # noqa: F401
 except ImportError:
-    pass
+    TransformerSentimentAnalyzer = None  # type: ignore
 
 __all__ = [
     # Caching

@@ -10,12 +10,12 @@ Features:
 - Data augmentation for small datasets
 """
 
-from typing import Dict, Any, Optional
-import pandas as pd
-import numpy as np
-import xgboost as xgb
-from xgboost import XGBRegressor
 import logging
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from xgboost import XGBRegressor
 
 from src.models.supervised.regression import BaseRegressionModel
 
@@ -45,7 +45,7 @@ def augment_financial_data(
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
 
-    for i in range(n_augmentations):
+    for _i in range(n_augmentations):
         augmented = df.copy()
 
         # Add Gaussian noise scaled by column std
@@ -87,7 +87,7 @@ class XGBoostRegressionModel(BaseRegressionModel):
 
     def __init__(
         self,
-        hyperparameters: Optional[Dict[str, Any]] = None,
+        hyperparameters: dict[str, Any] | None = None,
         random_state: int = 42,
         use_gpu: bool = False,
         early_stopping_rounds: int = 20,
@@ -171,8 +171,8 @@ class XGBoostRegressionModel(BaseRegressionModel):
         self,
         X_train: pd.DataFrame,
         y_train: pd.Series,
-        X_val: Optional[pd.DataFrame] = None,
-        y_val: Optional[pd.Series] = None,
+        X_val: pd.DataFrame | None = None,
+        y_val: pd.Series | None = None,
     ) -> "XGBoostRegressionModel":
         """
         Train the XGBoost model with optional augmentation.
@@ -238,7 +238,7 @@ class XGBoostRegressionModel(BaseRegressionModel):
 
 
 def create_xgboost_regressor(
-    config: Optional[Dict[str, Any]] = None,
+    config: dict[str, Any] | None = None,
 ) -> XGBoostRegressionModel:
     """
     Factory function to create XGBoost regression model.
@@ -260,8 +260,9 @@ def create_xgboost_regressor(
 
 if __name__ == "__main__":
     # Example usage
-    import numpy as np
     from pathlib import Path
+
+    import numpy as np
 
     print("Loading training data...")
     train_df = pd.read_parquet("data/processed/train_data.parquet")

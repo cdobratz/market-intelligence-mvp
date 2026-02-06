@@ -8,9 +8,9 @@ This module provides:
 """
 
 from src.models.ensemble.stacking import (
+    BlendingEnsemble,
     StackingEnsemble,
     VotingEnsemble,
-    BlendingEnsemble,
     create_ensemble,
 )
 

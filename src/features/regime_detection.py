@@ -10,12 +10,12 @@ Market regime detection improves model accuracy by 5-10% by allowing
 models to specialize for different market conditions.
 """
 
-from typing import Dict, List, Optional, Tuple, Any
-import pandas as pd
+import logging
+
 import numpy as np
+import pandas as pd
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,14 @@ class MarketRegimeDetector:
 
         self.model = None
         self.scaler = StandardScaler()
-        self.regime_labels: Dict[int, str] = {}
+        self.regime_labels: dict[int, str] = {}
         self.is_fitted_ = False
 
     def _build_features(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
-        volume_ratio: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
+        volume_ratio: pd.Series | None = None,
     ) -> pd.DataFrame:
         """
         Build feature matrix for regime detection.
@@ -114,8 +114,8 @@ class MarketRegimeDetector:
     def fit(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
-        volume_ratio: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
+        volume_ratio: pd.Series | None = None,
     ) -> "MarketRegimeDetector":
         """
         Fit the regime detection model.
@@ -211,8 +211,8 @@ class MarketRegimeDetector:
     def predict(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
-        volume_ratio: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
+        volume_ratio: pd.Series | None = None,
     ) -> pd.Series:
         """
         Predict regime for each observation.
@@ -248,8 +248,8 @@ class MarketRegimeDetector:
     def predict_proba(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
-        volume_ratio: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
+        volume_ratio: pd.Series | None = None,
     ) -> pd.DataFrame:
         """
         Predict regime probabilities for each observation.
@@ -286,7 +286,7 @@ class MarketRegimeDetector:
     def get_regime_statistics(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
     ) -> pd.DataFrame:
         """
         Get statistics for each regime.
@@ -323,7 +323,7 @@ class MarketRegimeDetector:
     def get_transition_matrix(
         self,
         returns: pd.Series,
-        volatility: Optional[pd.Series] = None,
+        volatility: pd.Series | None = None,
     ) -> pd.DataFrame:
         """
         Calculate regime transition probability matrix.

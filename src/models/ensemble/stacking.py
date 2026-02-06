@@ -5,36 +5,32 @@ Implements stacking ensemble methods that combine base models with a
 meta-learner, typically improving R² from ~0.35 to 0.45-0.55.
 """
 
-from typing import Dict, List, Any, Optional, Tuple
-import pandas as pd
-import numpy as np
-from sklearn.ensemble import (
-    StackingRegressor,
-    StackingClassifier,
-    RandomForestRegressor,
-    RandomForestClassifier,
-    GradientBoostingRegressor,
-    GradientBoostingClassifier,
-    VotingRegressor,
-    VotingClassifier,
-)
-from sklearn.linear_model import Ridge, RidgeCV, LogisticRegression
-from sklearn.model_selection import cross_val_score, TimeSeriesSplit
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
-import joblib
 import logging
 from pathlib import Path
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.ensemble import (
+    RandomForestRegressor,
+    StackingRegressor,
+    VotingRegressor,
+)
+from sklearn.linear_model import Ridge, RidgeCV
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 
 # Try to import XGBoost and LightGBM
 try:
-    from xgboost import XGBRegressor, XGBClassifier
+    from xgboost import XGBRegressor
     XGBOOST_AVAILABLE = True
 except ImportError:
     XGBOOST_AVAILABLE = False
 
 try:
-    from lightgbm import LGBMRegressor, LGBMClassifier
+    from lightgbm import LGBMRegressor
     LIGHTGBM_AVAILABLE = True
 except ImportError:
     LIGHTGBM_AVAILABLE = False
@@ -88,13 +84,13 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
         self.random_state = random_state
         self.n_jobs = n_jobs
 
-        self.base_models: List[Tuple[str, Any]] = []
+        self.base_models: list[tuple[str, Any]] = []
         self.meta_learner = None
         self.model = None
-        self.feature_names_: Optional[List[str]] = None
+        self.feature_names_: list[str] | None = None
         self.is_fitted_ = False
 
-    def _build_base_models(self) -> List[Tuple[str, Any]]:
+    def _build_base_models(self) -> list[tuple[str, Any]]:
         """Build the list of base models."""
         models = []
 
@@ -214,7 +210,7 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
         X: pd.DataFrame,
         y: pd.Series,
         dataset_name: str = "test"
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Evaluate the ensemble.
 
@@ -256,7 +252,7 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
         X: pd.DataFrame,
         y: pd.Series,
         cv: int = 5
-    ) -> Dict[str, Dict[str, float]]:
+    ) -> dict[str, dict[str, float]]:
         """
         Get cross-validation scores for each base model.
 
@@ -289,7 +285,7 @@ class StackingEnsemble(BaseEstimator, RegressorMixin):
 
         return scores
 
-    def get_feature_importance(self) -> Optional[pd.DataFrame]:
+    def get_feature_importance(self) -> pd.DataFrame | None:
         """
         Get aggregated feature importance from base models.
 
@@ -340,7 +336,7 @@ class VotingEnsemble(BaseEstimator, RegressorMixin):
 
     def __init__(
         self,
-        weights: Optional[List[float]] = None,
+        weights: list[float] | None = None,
         random_state: int = 42,
         n_jobs: int = -1,
     ):
@@ -358,7 +354,7 @@ class VotingEnsemble(BaseEstimator, RegressorMixin):
         self.model = None
         self.is_fitted_ = False
 
-    def _build_models(self) -> List[Tuple[str, Any]]:
+    def _build_models(self) -> list[tuple[str, Any]]:
         """Build base models for voting."""
         models = []
 
@@ -498,7 +494,7 @@ class BlendingEnsemble(BaseEstimator, RegressorMixin):
 
         # Get base model predictions
         base_preds = []
-        for name, model in self.base_models_:
+        for _name, model in self.base_models_:
             base_preds.append(model.predict(X))
 
         meta_X = np.column_stack(base_preds)

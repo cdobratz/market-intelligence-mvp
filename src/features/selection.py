@@ -9,19 +9,18 @@ Provides multiple feature selection methods:
 - L1-based selection (Lasso)
 """
 
-from typing import List, Dict, Optional, Tuple, Any
-import pandas as pd
+import logging
+
 import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.feature_selection import (
-    mutual_info_regression,
-    mutual_info_classif,
     RFECV,
     VarianceThreshold,
-    SelectFromModel,
+    mutual_info_classif,
+    mutual_info_regression,
 )
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LassoCV
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +64,9 @@ class FeatureSelector:
         self.method = method
         self.task = task
         self.random_state = random_state
-        self.selected_features: Optional[List[str]] = None
-        self.importance_scores: Optional[Dict[str, float]] = None
-        self.dropped_features: Optional[List[str]] = None
+        self.selected_features: list[str] | None = None
+        self.importance_scores: dict[str, float] | None = None
+        self.dropped_features: list[str] | None = None
 
     def select_features(
         self,
@@ -76,7 +75,7 @@ class FeatureSelector:
         n_features: int = 20,
         correlation_threshold: float = 0.95,
         variance_threshold: float = 0.01,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Select top N features using the specified method.
 
@@ -113,7 +112,7 @@ class FeatureSelector:
 
     def _select_mutual_info(
         self, X: pd.DataFrame, y: pd.Series, n_features: int
-    ) -> List[str]:
+    ) -> list[str]:
         """Select features based on mutual information with target."""
         logger.info("Computing mutual information scores...")
 
@@ -128,7 +127,7 @@ class FeatureSelector:
         y_clean = y.fillna(y.median())
 
         scores = mi_func(X_clean, y_clean, random_state=self.random_state)
-        self.importance_scores = dict(zip(X.columns, scores))
+        self.importance_scores = dict(zip(X.columns, scores, strict=True))
 
         # Sort and select top N
         sorted_features = sorted(
@@ -149,7 +148,7 @@ class FeatureSelector:
         y: pd.Series,
         n_features: int,
         threshold: float
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Select features by removing highly correlated ones and keeping target-correlated.
 
@@ -189,7 +188,7 @@ class FeatureSelector:
         logger.info(f"Selected {len(self.selected_features)} features by correlation")
         return self.selected_features
 
-    def _select_rfecv(self, X: pd.DataFrame, y: pd.Series) -> List[str]:
+    def _select_rfecv(self, X: pd.DataFrame, y: pd.Series) -> list[str]:
         """Select features using Recursive Feature Elimination with CV."""
         logger.info("Running Recursive Feature Elimination with CV...")
 
@@ -228,7 +227,7 @@ class FeatureSelector:
 
         self.selected_features = X.columns[selector.support_].tolist()
         self.dropped_features = X.columns[~selector.support_].tolist()
-        self.importance_scores = dict(zip(X.columns, selector.ranking_))
+        self.importance_scores = dict(zip(X.columns, selector.ranking_, strict=True))
 
         logger.info(f"RFECV selected {len(self.selected_features)} features")
         return self.selected_features
@@ -239,7 +238,7 @@ class FeatureSelector:
         y: pd.Series,
         n_features: int,
         threshold: float
-    ) -> List[str]:
+    ) -> list[str]:
         """Select features by removing low-variance ones first, then rank by MI."""
         logger.info(f"Removing features with variance < {threshold}")
 
@@ -268,7 +267,7 @@ class FeatureSelector:
 
     def _select_lasso(
         self, X: pd.DataFrame, y: pd.Series, n_features: int
-    ) -> List[str]:
+    ) -> list[str]:
         """Select features using L1 regularization (Lasso)."""
         logger.info("Selecting features using Lasso regularization...")
 
@@ -285,7 +284,7 @@ class FeatureSelector:
 
         # Get feature importances (absolute coefficients)
         importance = np.abs(lasso.coef_)
-        self.importance_scores = dict(zip(X.columns, importance))
+        self.importance_scores = dict(zip(X.columns, importance, strict=True))
 
         # Select features with non-zero coefficients, up to n_features
         sorted_features = sorted(
@@ -308,7 +307,7 @@ class FeatureSelector:
         y: pd.Series,
         n_features: int,
         correlation_threshold: float
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Combined selection: variance filter -> correlation filter -> MI ranking.
 
@@ -357,7 +356,7 @@ class FeatureSelector:
                 random_state=self.random_state
             )
 
-        self.importance_scores = dict(zip(X_step2.columns, scores))
+        self.importance_scores = dict(zip(X_step2.columns, scores, strict=True))
         sorted_features = sorted(
             self.importance_scores.items(),
             key=lambda x: x[1],
@@ -415,7 +414,7 @@ def quick_feature_selection(
     n_features: int = 20,
     method: str = "combined",
     task: str = "regression"
-) -> Tuple[List[str], pd.DataFrame]:
+) -> tuple[list[str], pd.DataFrame]:
     """
     Convenience function for quick feature selection.
 

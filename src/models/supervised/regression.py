@@ -399,3 +399,231 @@ class BaseRegressionModel(ABC):
             logger.info(f"Logged to MLflow run: {run.info.run_id}")
 
             return run.info.run_id
+
+
+def walk_forward_validation(
+    model: BaseRegressionModel,
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_splits: int = 5,
+    test_size: int = 30,
+    gap: int = 0,
+) -> Dict[str, Any]:
+    """
+    Walk-forward validation that simulates real trading conditions.
+
+    This function implements expanding window walk-forward validation,
+    which is the gold standard for evaluating time-series models in
+    quantitative finance. It prevents look-ahead bias by always training
+    on past data and testing on future data.
+
+    Args:
+        model: BaseRegressionModel instance to evaluate
+        X: Feature DataFrame
+        y: Target Series
+        n_splits: Number of train/test splits
+        test_size: Number of samples in each test fold
+        gap: Number of samples to skip between train and test (for data leakage prevention)
+
+    Returns:
+        Dictionary with validation results including:
+        - mean_rmse, std_rmse: RMSE statistics across folds
+        - mean_mae, std_mae: MAE statistics across folds
+        - mean_r2, std_r2: R² statistics across folds
+        - mean_directional_accuracy: Average directional accuracy
+        - fold_metrics: Detailed metrics for each fold
+        - all_predictions: All out-of-sample predictions
+        - all_actuals: Corresponding actual values
+    """
+    logger.info(f"Starting walk-forward validation with {n_splits} splits, test_size={test_size}")
+
+    tscv = TimeSeriesSplit(n_splits=n_splits, test_size=test_size, gap=gap)
+
+    metrics_per_fold = []
+    all_predictions = []
+    all_actuals = []
+    fold_indices = []
+
+    for fold, (train_idx, test_idx) in enumerate(tscv.split(X), 1):
+        logger.info(f"Fold {fold}/{n_splits}: Train size={len(train_idx)}, Test size={len(test_idx)}")
+
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+
+        # Create a fresh model instance for each fold
+        fold_model = model._create_model()
+
+        # Train on historical data
+        fold_model.fit(X_train, y_train)
+
+        # Predict on future data
+        y_pred = fold_model.predict(X_test)
+
+        # Calculate fold metrics
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        mae = mean_absolute_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+
+        # Calculate directional accuracy
+        if len(y_test) > 1:
+            actual_direction = np.sign(np.diff(y_test.values))
+            pred_direction = np.sign(np.diff(y_pred))
+            directional_accuracy = (
+                (actual_direction == pred_direction).sum() / len(actual_direction) * 100
+            )
+        else:
+            directional_accuracy = 0.0
+
+        fold_metrics = {
+            "fold": fold,
+            "train_size": len(train_idx),
+            "test_size": len(test_idx),
+            "rmse": rmse,
+            "mae": mae,
+            "r2": r2,
+            "directional_accuracy": directional_accuracy,
+        }
+        metrics_per_fold.append(fold_metrics)
+
+        # Store predictions
+        all_predictions.extend(y_pred.tolist())
+        all_actuals.extend(y_test.values.tolist())
+        fold_indices.extend([fold] * len(test_idx))
+
+        logger.info(
+            f"  Fold {fold} Results: RMSE={rmse:.6f}, MAE={mae:.6f}, "
+            f"R²={r2:.6f}, Dir. Acc={directional_accuracy:.2f}%"
+        )
+
+    # Aggregate metrics across folds
+    results = {
+        "n_splits": n_splits,
+        "test_size": test_size,
+        "gap": gap,
+        "mean_rmse": np.mean([m["rmse"] for m in metrics_per_fold]),
+        "std_rmse": np.std([m["rmse"] for m in metrics_per_fold]),
+        "mean_mae": np.mean([m["mae"] for m in metrics_per_fold]),
+        "std_mae": np.std([m["mae"] for m in metrics_per_fold]),
+        "mean_r2": np.mean([m["r2"] for m in metrics_per_fold]),
+        "std_r2": np.std([m["r2"] for m in metrics_per_fold]),
+        "mean_directional_accuracy": np.mean(
+            [m["directional_accuracy"] for m in metrics_per_fold]
+        ),
+        "std_directional_accuracy": np.std(
+            [m["directional_accuracy"] for m in metrics_per_fold]
+        ),
+        "fold_metrics": metrics_per_fold,
+        "all_predictions": all_predictions,
+        "all_actuals": all_actuals,
+        "fold_indices": fold_indices,
+    }
+
+    logger.info(
+        f"\nWalk-Forward Validation Complete:"
+        f"\n  RMSE: {results['mean_rmse']:.6f} ± {results['std_rmse']:.6f}"
+        f"\n  MAE:  {results['mean_mae']:.6f} ± {results['std_mae']:.6f}"
+        f"\n  R²:   {results['mean_r2']:.6f} ± {results['std_r2']:.6f}"
+        f"\n  Directional Accuracy: {results['mean_directional_accuracy']:.2f}% "
+        f"± {results['std_directional_accuracy']:.2f}%"
+    )
+
+    return results
+
+
+def expanding_window_backtest(
+    model: BaseRegressionModel,
+    X: pd.DataFrame,
+    y: pd.Series,
+    initial_train_size: int = 100,
+    step_size: int = 1,
+    retrain_frequency: int = 20,
+) -> Dict[str, Any]:
+    """
+    Expanding window backtest with configurable retraining frequency.
+
+    This implements a more realistic trading simulation where the model
+    is retrained periodically as new data becomes available.
+
+    Args:
+        model: BaseRegressionModel instance
+        X: Feature DataFrame
+        y: Target Series
+        initial_train_size: Minimum training samples before first prediction
+        step_size: Number of steps to predict before potential retrain
+        retrain_frequency: Retrain model every N predictions
+
+    Returns:
+        Dictionary with backtest results
+    """
+    logger.info(
+        f"Starting expanding window backtest: initial_train={initial_train_size}, "
+        f"retrain_freq={retrain_frequency}"
+    )
+
+    predictions = []
+    actuals = []
+    timestamps = []
+    trained_model = None
+    last_train_idx = 0
+
+    for i in range(initial_train_size, len(X)):
+        # Check if retraining is needed
+        should_retrain = (
+            trained_model is None or
+            (i - last_train_idx) >= retrain_frequency
+        )
+
+        if should_retrain:
+            # Train on all available historical data
+            X_train = X.iloc[:i]
+            y_train = y.iloc[:i]
+
+            trained_model = model._create_model()
+            trained_model.fit(X_train, y_train)
+            last_train_idx = i
+
+            logger.debug(f"Retrained at index {i} with {len(X_train)} samples")
+
+        # Make prediction
+        X_test = X.iloc[[i]]
+        y_pred = trained_model.predict(X_test)[0]
+
+        predictions.append(y_pred)
+        actuals.append(y.iloc[i])
+
+        if hasattr(X, 'index'):
+            timestamps.append(X.index[i])
+
+    # Calculate overall metrics
+    predictions = np.array(predictions)
+    actuals = np.array(actuals)
+
+    rmse = np.sqrt(mean_squared_error(actuals, predictions))
+    mae = mean_absolute_error(actuals, predictions)
+    r2 = r2_score(actuals, predictions)
+
+    # Directional accuracy
+    actual_direction = np.sign(np.diff(actuals))
+    pred_direction = np.sign(np.diff(predictions))
+    directional_accuracy = (actual_direction == pred_direction).sum() / len(actual_direction) * 100
+
+    results = {
+        "initial_train_size": initial_train_size,
+        "retrain_frequency": retrain_frequency,
+        "n_predictions": len(predictions),
+        "rmse": rmse,
+        "mae": mae,
+        "r2": r2,
+        "directional_accuracy": directional_accuracy,
+        "predictions": predictions.tolist(),
+        "actuals": actuals.tolist(),
+        "timestamps": timestamps if timestamps else None,
+    }
+
+    logger.info(
+        f"Expanding Window Backtest Complete: "
+        f"RMSE={rmse:.6f}, MAE={mae:.6f}, R²={r2:.6f}, "
+        f"Dir. Acc={directional_accuracy:.2f}%"
+    )
+
+    return results

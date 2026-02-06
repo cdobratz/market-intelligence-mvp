@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    mlflow==2.10.0 \
+    psycopg2-binary \
+    google-cloud-storage \
+    boto3
+
+# Cloud Run expects port 8080
+EXPOSE 8080
+
+# Use shell form to expand environment variables
+CMD mlflow server \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --backend-store-uri ${MLFLOW_BACKEND_URI:-sqlite:///mlflow.db} \
+    --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-./mlartifacts}

@@ -1,0 +1,22 @@
+# Requirements for Airflow container
+# Core data processing
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=15.0.0
+
+# Feature engineering
+scikit-learn>=1.4.0
+
+# API clients
+requests>=2.31.0
+
+# Database
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+
+# MLflow client
+mlflow>=2.10.0
+
+# Google Cloud
+google-cloud-storage>=2.14.0
+google-cloud-secret-manager>=2.18.0

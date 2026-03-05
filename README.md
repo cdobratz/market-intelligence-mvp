@@ -83,6 +83,26 @@ This project demonstrates a production-ready machine learning pipeline for finan
 - **uv**: Modern Python package manager
 - **Git**: For version control
 
+### Demo Mode (No API Keys Required)
+
+The platform includes a **demo mode** that works without API keys, using synthetic market data for demonstrations.
+
+```bash
+# Start all services with Docker
+docker compose up -d
+
+# Access the demo dashboard
+open http://localhost:8000
+```
+
+**Demo Features:**
+- Enter any stock symbol (AAPL, GOOGL, MSFT, etc.)
+- Get instant price predictions with confidence scores
+- View technical indicators (RSI, MACD, SMA)
+- See pipeline status and model information
+
+> **Note**: Demo mode uses synthetic data. For real market predictions, add your API keys (see below).
+
 ### Installation
 
 1. **Clone the repository**
@@ -145,6 +165,7 @@ docker-compose logs -f
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
+| **Demo Dashboard** | http://localhost:8000 | No authentication (demo mode) |
 | Airflow Web UI | http://localhost:8080 | Username: `airflow`<br>Password: `airflow` |
 | MLflow UI | http://localhost:5000 | No authentication |
 | Jupyter Lab | http://localhost:8888 | Token: `jupyter` |
@@ -355,15 +376,37 @@ client.transition_model_version_stage(
 
 ### Model Serving
 
+The FastAPI service provides real-time stock predictions:
+
 ```bash
-# Start FastAPI server
+# Start FastAPI server (or use Docker)
 uvicorn src.api.main:app --reload
 
 # Test prediction endpoint
 curl -X POST "http://localhost:8000/predict" \
   -H "Content-Type: application/json" \
-  -d '{"symbol": "AAPL", "features": [...]}'
+  -d '{"symbol": "AAPL"}'
+
+# Response:
+# {
+#   "symbol": "AAPL",
+#   "prediction": 0.0234,
+#   "direction": "bullish",
+#   "confidence": 0.75,
+#   "current_price": 175.50,
+#   "target_price": 179.62,
+#   "timestamp": "2026-03-05T12:00:00"
+# }
 ```
+
+**API Endpoints:**
+- `GET /` - Demo dashboard (web UI)
+- `GET /health` - Health check
+- `POST /predict` - Single stock prediction
+- `POST /predict/batch` - Batch predictions
+- `GET /pipeline/status` - Pipeline status
+- `GET /models` - Available models
+- `GET /docs` - OpenAPI documentation
 
 ---
 

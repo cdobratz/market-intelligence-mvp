@@ -87,14 +87,9 @@ build_and_push() {
 
     # Note: Airflow not deployed to Cloud Run - use local Docker
     log_warn "Skipping Airflow build (use local Docker for Airflow)"
+    log_warn "Skipping MLflow (use local Docker or deploy later)"
 
-    # Use official MLflow image - no build needed
-    log_info "Using official MLflow image (no build needed)..."
-    docker pull mlflow/mlflow:2.10.0
-    docker tag mlflow/mlflow:2.10.0 "${REGISTRY}/mlflow:latest"
-    docker push "${REGISTRY}/mlflow:latest"
-
-    # Build API container
+    # Build API container only
     log_info "Building and pushing API container..."
     docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" .
     docker push "${REGISTRY}/api:latest"
@@ -171,10 +166,10 @@ stop_services() {
 show_urls() {
     echo ""
     log_info "Service URLs:"
-    echo "  MLflow:  $(gcloud run services describe $MLFLOW_SERVICE --region=$REGION --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
     echo "  API:     $(gcloud run services describe $API_SERVICE --region=$REGION --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
     echo ""
-    log_info "Note: Airflow is not deployed to Cloud Run. Use local Docker: docker compose up -d airflow"
+    log_info "Note: Airflow and MLflow are not deployed to Cloud Run."
+    log_info "Use local Docker for those: docker compose up -d airflow mlflow"
 }
 
 # Check status of services
@@ -182,7 +177,7 @@ check_status() {
     log_info "Checking Cloud Run service status..."
     echo ""
 
-    for service in "$MLFLOW_SERVICE" "$API_SERVICE"; do
+    for service in "$API_SERVICE"; do
         status=$(gcloud run services describe "$service" \
             --region="$REGION" \
             --format='value(status.conditions[0].status)' 2>/dev/null || echo "Not deployed")
@@ -197,7 +192,7 @@ check_status() {
         echo ""
     done
 
-    echo "  Note: Airflow is not deployed to Cloud Run"
+    echo "  Note: Airflow and MLflow use local Docker"
     echo ""
 
     show_urls
@@ -213,9 +208,8 @@ destroy_resources() {
     fi
 
     log_info "Deleting Cloud Run services..."
-    gcloud run services delete "$MLFLOW_SERVICE" --region="$REGION" --quiet 2>/dev/null || true
     gcloud run services delete "$API_SERVICE" --region="$REGION" --quiet 2>/dev/null || true
-    # Note: Airflow not deployed to Cloud Run
+    # Note: Airflow and MLflow not deployed to Cloud Run
 
     log_info "Deleting GCS bucket..."
     gsutil rm -r "gs://${PROJECT_ID}-ml-artifacts" 2>/dev/null || true
@@ -226,10 +220,10 @@ destroy_resources() {
     log_info "All resources deleted."
 }
 
-# Create GCS bucket for MLflow artifacts
+# Create GCS bucket (optional - only needed for MLflow)
 create_mlflow_bucket() {
-    log_info "Creating GCS bucket for MLflow artifacts..."
-    gsutil mb -l "$REGION" "gs://${PROJECT_ID}-ml-artifacts" 2>/dev/null || log_warn "Bucket may already exist"
+    log_info "Creating GCS bucket for MLflow artifacts (optional)..."
+    gsutil mb -l "$REGION" "gs://${PROJECT_ID}-ml-artifacts" 2>/dev/null || log_warn "Bucket may already exist or not needed"
 }
 
 # Full deployment

@@ -150,6 +150,26 @@ services:
     command: start-notebook.sh --NotebookApp.token='jupyter' --NotebookApp.password=''
     restart: always
 
+  # FastAPI for predictions
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-.}/src:/app/src
+      - ${AIRFLOW_PROJ_DIR:-.}/models:/app/models
+    environment:
+      - DEMO_MODE=${DEMO_MODE:-true}
+      - PORT=${PORT:-8000}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow
+    restart: always
+
 volumes:
   postgres-db-volume:
   mlflow-data:

@@ -102,20 +102,9 @@ build_and_push() {
 deploy_services() {
     REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
 
-    log_info "Deploying Airflow to Cloud Run..."
-    gcloud run deploy "$AIRFLOW_SERVICE" \
-        --image="${REGISTRY}/airflow:latest" \
-        --region="$REGION" \
-        --platform=managed \
-        --memory=2Gi \
-        --cpu=2 \
-        --timeout=3600 \
-        --min-instances=0 \
-        --max-instances=1 \
-        --set-env-vars="AIRFLOW__CORE__EXECUTOR=LocalExecutor" \
-        --allow-unauthenticated \
-        --quiet
-
+    # Note: Airflow requires Cloud SQL (not available without special permissions)
+    # Skip Airflow deployment - use local Docker for Airflow
+    log_warn "Skipping Airflow (requires Cloud SQL). Use local Docker for Airflow."
     log_info "Deploying MLflow to Cloud Run..."
     gcloud run deploy "$MLFLOW_SERVICE" \
         --image="${REGISTRY}/mlflow:latest" \
@@ -138,8 +127,12 @@ deploy_services() {
         --cpu=2 \
         --min-instances=0 \
         --max-instances=10 \
+        --set-env-vars="DEMO_MODE=true" \
         --allow-unauthenticated \
         --quiet
+
+    log_info "Deployment complete!"
+    show_urls
 }
 
 # Start services (set min-instances to 1)

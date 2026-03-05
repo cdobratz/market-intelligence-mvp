@@ -60,13 +60,11 @@ check_gcloud() {
     log_info "Using project: $PROJECT_ID"
 }
 
-# Enable required APIs
+# Enable required APIs (excluding Cloud SQL which requires special permissions)
 enable_apis() {
     log_info "Enabling required GCP APIs..."
     gcloud services enable \
         run.googleapis.com \
-        cloudsql.googleapis.com \
-        redis.googleapis.com \
         storage.googleapis.com \
         artifactregistry.googleapis.com \
         secretmanager.googleapis.com \
@@ -127,7 +125,7 @@ deploy_services() {
         --cpu=1 \
         --min-instances=0 \
         --max-instances=1 \
-        --set-env-vars="MLFLOW_BACKEND_URI=sqlite:///mlflow.db,MLFLOW_ARTIFACT_ROOT=gs://${PROJECT_ID}-ml-artifacts" \
+        --set-env-vars="MLFLOW_BACKEND_URI=sqlite:////tmp/mlflow.db,MLFLOW_ARTIFACT_ROOT=gs://${PROJECT_ID}-ml-artifacts" \
         --allow-unauthenticated \
         --quiet
 

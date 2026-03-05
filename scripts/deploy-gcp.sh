@@ -81,21 +81,26 @@ create_artifact_registry() {
         --quiet 2>/dev/null || log_warn "Repository already exists"
 }
 
-# Build and push containers
+# Build and push containers (force amd64 architecture for Cloud Run)
 build_and_push() {
     REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
 
-    log_info "Building and pushing Airflow container..."
-    docker build -f docker/Dockerfile.airflow -t "${REGISTRY}/airflow:latest" .
-    docker push "${REGISTRY}/airflow:latest"
+    # Ensure docker buildx is available for cross-platform builds
+    docker buildx create --name mybuilder --use 2>/dev/null || true
+    docker buildx use mybuilder 2>/dev/null || true
 
-    log_info "Building and pushing MLflow container..."
-    docker build -f docker/Dockerfile.mlflow -t "${REGISTRY}/mlflow:latest" .
-    docker push "${REGISTRY}/mlflow:latest"
+    log_info "Building and pushing Airflow container (amd64)..."
+    docker buildx build --platform linux/amd64 -f docker/Dockerfile.airflow -t "${REGISTRY}/airflow:latest" . \
+        --push || docker build -f docker/Dockerfile.airflow -t "${REGISTRY}/airflow:latest" . && docker push "${REGISTRY}/airflow:latest"
 
-    log_info "Building and pushing API container..."
-    docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" .
-    docker push "${REGISTRY}/api:latest"
+    log_info "Building and pushing MLflow container (amd64)..."
+    # Use official MLflow image for better compatibility
+    docker buildx build --platform linux/amd64 -f docker/Dockerfile.mlflow -t "${REGISTRY}/mlflow:latest" . \
+        --push || docker build -f docker/Dockerfile.mlflow -t "${REGISTRY}/mlflow:latest" . && docker push "${REGISTRY}/mlflow:latest"
+
+    log_info "Building and pushing API container (amd64)..."
+    docker buildx build --platform linux/amd64 -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" . \
+        --push || docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" . && docker push "${REGISTRY}/api:latest"
 }
 
 # Deploy services to Cloud Run
@@ -112,6 +117,7 @@ deploy_services() {
         --platform=managed \
         --memory=1Gi \
         --cpu=1 \
+        --port=8080 \
         --min-instances=0 \
         --max-instances=1 \
         --set-env-vars="MLFLOW_BACKEND_URI=sqlite:////tmp/mlflow.db,MLFLOW_ARTIFACT_ROOT=gs://${PROJECT_ID}-ml-artifacts" \
@@ -125,6 +131,7 @@ deploy_services() {
         --platform=managed \
         --memory=2Gi \
         --cpu=2 \
+        --port=8080 \
         --min-instances=0 \
         --max-instances=10 \
         --set-env-vars="DEMO_MODE=true" \
@@ -139,16 +146,14 @@ deploy_services() {
 start_services() {
     log_info "Starting all Cloud Run services..."
 
-    gcloud run services update "$AIRFLOW_SERVICE" \
-        --region="$REGION" \
-        --min-instances=1 \
-        --quiet
-
+    # Note: Airflow not deployed to Cloud Run (use local Docker)
+    log_info "Starting MLflow..."
     gcloud run services update "$MLFLOW_SERVICE" \
         --region="$REGION" \
         --min-instances=1 \
         --quiet
 
+    log_info "Starting API..."
     gcloud run services update "$API_SERVICE" \
         --region="$REGION" \
         --min-instances=1 \
@@ -162,16 +167,14 @@ start_services() {
 stop_services() {
     log_info "Stopping all Cloud Run services (scaling to zero)..."
 
-    gcloud run services update "$AIRFLOW_SERVICE" \
-        --region="$REGION" \
-        --min-instances=0 \
-        --quiet
-
+    # Note: Airflow not deployed to Cloud Run (use local Docker)
+    log_info "Stopping MLflow..."
     gcloud run services update "$MLFLOW_SERVICE" \
         --region="$REGION" \
         --min-instances=0 \
         --quiet
 
+    log_info "Stopping API..."
     gcloud run services update "$API_SERVICE" \
         --region="$REGION" \
         --min-instances=0 \
@@ -185,10 +188,10 @@ stop_services() {
 show_urls() {
     echo ""
     log_info "Service URLs:"
-    echo "  Airflow: $(gcloud run services describe $AIRFLOW_SERVICE --region=$REGION --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
     echo "  MLflow:  $(gcloud run services describe $MLFLOW_SERVICE --region=$REGION --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
     echo "  API:     $(gcloud run services describe $API_SERVICE --region=$REGION --format='value(status.url)' 2>/dev/null || echo 'Not deployed')"
     echo ""
+    log_info "Note: Airflow is not deployed to Cloud Run. Use local Docker: docker compose up -d airflow"
 }
 
 # Check status of services
@@ -196,14 +199,10 @@ check_status() {
     log_info "Checking Cloud Run service status..."
     echo ""
 
-    for service in "$AIRFLOW_SERVICE" "$MLFLOW_SERVICE" "$API_SERVICE"; do
+    for service in "$MLFLOW_SERVICE" "$API_SERVICE"; do
         status=$(gcloud run services describe "$service" \
             --region="$REGION" \
             --format='value(status.conditions[0].status)' 2>/dev/null || echo "Not deployed")
-
-        instances=$(gcloud run services describe "$service" \
-            --region="$REGION" \
-            --format='value(spec.template.spec.containerConcurrency)' 2>/dev/null || echo "N/A")
 
         min_instances=$(gcloud run services describe "$service" \
             --region="$REGION" \
@@ -214,6 +213,9 @@ check_status() {
         echo "    Min Instances: $min_instances"
         echo ""
     done
+
+    echo "  Note: Airflow is not deployed to Cloud Run"
+    echo ""
 
     show_urls
 }
@@ -228,9 +230,12 @@ destroy_resources() {
     fi
 
     log_info "Deleting Cloud Run services..."
-    gcloud run services delete "$AIRFLOW_SERVICE" --region="$REGION" --quiet 2>/dev/null || true
     gcloud run services delete "$MLFLOW_SERVICE" --region="$REGION" --quiet 2>/dev/null || true
     gcloud run services delete "$API_SERVICE" --region="$REGION" --quiet 2>/dev/null || true
+    # Note: Airflow not deployed to Cloud Run
+
+    log_info "Deleting GCS bucket..."
+    gsutil rm -r "gs://${PROJECT_ID}-ml-artifacts" 2>/dev/null || true
 
     log_info "Deleting Artifact Registry repository..."
     gcloud artifacts repositories delete "$REPO" --location="$REGION" --quiet 2>/dev/null || true
@@ -238,11 +243,18 @@ destroy_resources() {
     log_info "All resources deleted."
 }
 
+# Create GCS bucket for MLflow artifacts
+create_mlflow_bucket() {
+    log_info "Creating GCS bucket for MLflow artifacts..."
+    gsutil mb -l "$REGION" "gs://${PROJECT_ID}-ml-artifacts" 2>/dev/null || log_warn "Bucket may already exist"
+}
+
 # Full deployment
 full_deploy() {
     check_gcloud
     enable_apis
     create_artifact_registry
+    create_mlflow_bucket
     build_and_push
     deploy_services
     show_urls

@@ -81,49 +81,31 @@ create_artifact_registry() {
         --quiet 2>/dev/null || log_warn "Repository already exists"
 }
 
-# Build and push containers (force amd64 architecture for Cloud Run)
+# Build and push containers
 build_and_push() {
     REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
 
-    # Ensure docker buildx is available for cross-platform builds
-    docker buildx create --name mybuilder --use 2>/dev/null || true
-    docker buildx use mybuilder 2>/dev/null || true
+    # Note: Airflow not deployed to Cloud Run - use local Docker
+    log_warn "Skipping Airflow build (use local Docker for Airflow)"
 
-    log_info "Building and pushing Airflow container (amd64)..."
-    docker buildx build --platform linux/amd64 -f docker/Dockerfile.airflow -t "${REGISTRY}/airflow:latest" . \
-        --push || docker build -f docker/Dockerfile.airflow -t "${REGISTRY}/airflow:latest" . && docker push "${REGISTRY}/airflow:latest"
+    # Use official MLflow image - no build needed
+    log_info "Using official MLflow image (no build needed)..."
+    docker pull mlflow/mlflow:2.10.0
+    docker tag mlflow/mlflow:2.10.0 "${REGISTRY}/mlflow:latest"
+    docker push "${REGISTRY}/mlflow:latest"
 
-    log_info "Building and pushing MLflow container (amd64)..."
-    # Use official MLflow image for better compatibility
-    docker buildx build --platform linux/amd64 -f docker/Dockerfile.mlflow -t "${REGISTRY}/mlflow:latest" . \
-        --push || docker build -f docker/Dockerfile.mlflow -t "${REGISTRY}/mlflow:latest" . && docker push "${REGISTRY}/mlflow:latest"
-
-    log_info "Building and pushing API container (amd64)..."
-    docker buildx build --platform linux/amd64 -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" . \
-        --push || docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" . && docker push "${REGISTRY}/api:latest"
+    # Build API container
+    log_info "Building and pushing API container..."
+    docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" .
+    docker push "${REGISTRY}/api:latest"
 }
 
 # Deploy services to Cloud Run
 deploy_services() {
     REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}"
 
-    # Note: Airflow requires Cloud SQL (not available without special permissions)
-    # Skip Airflow deployment - use local Docker for Airflow
-    log_warn "Skipping Airflow (requires Cloud SQL). Use local Docker for Airflow."
-    log_info "Deploying MLflow to Cloud Run..."
-    gcloud run deploy "$MLFLOW_SERVICE" \
-        --image="${REGISTRY}/mlflow:latest" \
-        --region="$REGION" \
-        --platform=managed \
-        --memory=1Gi \
-        --cpu=1 \
-        --port=8080 \
-        --min-instances=0 \
-        --max-instances=1 \
-        --set-env-vars="MLFLOW_BACKEND_URI=sqlite:////tmp/mlflow.db,MLFLOW_ARTIFACT_ROOT=gs://${PROJECT_ID}-ml-artifacts" \
-        --allow-unauthenticated \
-        --quiet
-
+    # Note: Airflow not deployed to Cloud Run (use local Docker)
+    
     log_info "Deploying API to Cloud Run..."
     gcloud run deploy "$API_SERVICE" \
         --image="${REGISTRY}/api:latest" \
@@ -134,6 +116,7 @@ deploy_services() {
         --port=8080 \
         --min-instances=0 \
         --max-instances=10 \
+        --timeout=600 \
         --set-env-vars="DEMO_MODE=true" \
         --allow-unauthenticated \
         --quiet

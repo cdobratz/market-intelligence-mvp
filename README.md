@@ -1,4 +1,4 @@
-# 📊 Financial Market Intelligence Platform - MVP
+# 📊 Financial Market Intelligence Platform 
 
 > End-to-end machine learning pipeline for financial market analysis and prediction
 
@@ -165,7 +165,7 @@ docker-compose logs -f
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| **Demo Dashboard** | http://localhost:8000 | No authentication (demo mode) |
+| **Live Dashboard** | https://market-intel-api-1001565765695.us-west1.run.app/ | No authentication |
 | Airflow Web UI | http://localhost:8080 | Username: `airflow`<br>Password: `airflow` |
 | MLflow UI | http://localhost:5000 | No authentication |
 | Jupyter Lab | http://localhost:8888 | Token: `jupyter` |

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Financial Market Intelligence Platform MVP - an end-to-end ML pipeline for market analysis and prediction using Apache Airflow, MLflow, and multiple ML frameworks.
+Financial Market Intelligence Platform - an end-to-end ML pipeline for market analysis and prediction using Apache Airflow, MLflow, and multiple ML frameworks.
 
 **Current Status**: Phase 3 (ML Model Development) - 15% complete
 
@@ -36,6 +36,7 @@ docker-compose exec airflow-scheduler airflow dags trigger data_ingestion_pipeli
 ### 1. Code Efficiency Improvements
 
 #### 1.1 Replace Keyword-Based Sentiment with Pre-trained Models
+
 **Current**: `src/features/sentiment.py` uses simple keyword matching (412 lines)
 **Problem**: Low accuracy, no context understanding, misses sarcasm/negation
 **Recommendation**: Use FinBERT or DistilBERT-financial for sentiment
@@ -59,6 +60,7 @@ class TransformerSentimentAnalyzer:
 ```
 
 **Why Better**:
+
 - 15-25% accuracy improvement on financial text
 - Handles negation ("not bullish" = bearish)
 - Context-aware embeddings
@@ -69,6 +71,7 @@ class TransformerSentimentAnalyzer:
 ---
 
 #### 1.2 Vectorize Technical Indicator Calculations
+
 **Current**: `src/features/technical_indicators.py` calculates indicators sequentially
 **Problem**: Each indicator iterates over entire DataFrame separately
 **Recommendation**: Use vectorized operations and combine calculations
@@ -103,6 +106,7 @@ def calculate_all_indicators_vectorized(df: pd.DataFrame) -> pd.DataFrame:
 ```
 
 **Why Better**:
+
 - 30-40% faster on large datasets
 - Reduces memory allocations
 - NumPy vectorization is C-optimized
@@ -110,6 +114,7 @@ def calculate_all_indicators_vectorized(df: pd.DataFrame) -> pd.DataFrame:
 ---
 
 #### 1.3 Implement Feature Caching with Redis
+
 **Current**: Features recalculated on every DAG run
 **Problem**: Wastes compute for unchanged data
 **Recommendation**: Cache computed features with TTL
@@ -140,6 +145,7 @@ class FeatureCache:
 ```
 
 **Why Better**:
+
 - Redis already in docker-compose but unused
 - Eliminates redundant computation
 - Enables incremental processing
@@ -149,9 +155,10 @@ class FeatureCache:
 ### 2. Google Cloud Run Deployment
 
 #### 2.1 Container Architecture for Cloud Run
+
 **Goal**: Deploy the full stack to Google Cloud Run with Docker containers
 
-```
+```md
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Google Cloud Platform                        │
 ├─────────────────────────────────────────────────────────────────┤
@@ -181,6 +188,7 @@ class FeatureCache:
 #### 2.2 Dockerfiles for Cloud Run
 
 **Airflow Container** (`docker/Dockerfile.airflow`):
+
 ```dockerfile
 FROM apache/airflow:2.8.1-python3.11
 
@@ -209,6 +217,7 @@ CMD ["airflow", "webserver", "--port", "8080"]
 ```
 
 **MLflow Container** (`docker/Dockerfile.mlflow`):
+
 ```dockerfile
 FROM python:3.11-slim
 
@@ -233,6 +242,7 @@ CMD ["mlflow", "server", \
 ```
 
 **FastAPI Inference Container** (`docker/Dockerfile.api`):
+
 ```dockerfile
 FROM python:3.11-slim
 
@@ -259,6 +269,7 @@ CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
 #### 2.3 Cloud Run Deployment Scripts
 
 **Deploy All Services** (`scripts/deploy-gcp.sh`):
+
 ```bash
 #!/bin/bash
 set -e
@@ -361,6 +372,7 @@ echo "API: $(gcloud run services describe api --region=$REGION --format='value(s
 #### 2.4 Cloud Run Configuration Files
 
 **cloudbuild.yaml** (CI/CD with Cloud Build):
+
 ```yaml
 steps:
   # Build Airflow container
@@ -408,6 +420,7 @@ options:
 #### 2.5 Environment Configuration for GCP
 
 **.env.gcp** (GCP-specific environment variables):
+
 ```bash
 # Google Cloud Project
 GCP_PROJECT_ID=your-project-id
@@ -435,8 +448,9 @@ NEWS_API_KEY=projects/${GCP_PROJECT_ID}/secrets/news-api-key/versions/latest
 #### 2.6 Cost Optimization for Cloud Run
 
 **Estimated Monthly Costs**:
+
 | Service | Configuration | Est. Cost |
-|---------|--------------|-----------|
+| ------- | ------------ | --------- |
 | Cloud Run (Airflow) | 2 vCPU, 2GB, always-on | $30-50 |
 | Cloud Run (MLflow) | 1 vCPU, 1GB, always-on | $15-25 |
 | Cloud Run (API) | 2 vCPU, 2GB, scale-to-zero | $5-20 |
@@ -446,6 +460,7 @@ NEWS_API_KEY=projects/${GCP_PROJECT_ID}/secrets/news-api-key/versions/latest
 | **Total** | | **$95-140/mo** |
 
 **Cost Reduction Tips**:
+
 ```yaml
 # Use min-instances=0 for non-critical services
 gcloud run deploy mlflow --min-instances=0
@@ -464,6 +479,7 @@ gcloud scheduler jobs create http stop-airflow \
 ### 3. Model Accuracy Improvements
 
 #### 3.1 Add Walk-Forward Validation
+
 **Current**: Simple train/test split with 80/20
 **Problem**: Doesn't respect temporal nature of financial data
 **Recommendation**: Implement expanding window walk-forward validation
@@ -507,6 +523,7 @@ def walk_forward_validation(
 ```
 
 **Why Better**:
+
 - Prevents look-ahead bias
 - More realistic performance estimates
 - Identifies model stability over time
@@ -515,6 +532,7 @@ def walk_forward_validation(
 ---
 
 #### 3.2 Add Target Engineering for Better Signals
+
 **Current**: Predicting raw returns (noisy)
 **Problem**: Raw returns have low signal-to-noise ratio
 **Recommendation**: Engineer better prediction targets
@@ -573,6 +591,7 @@ def create_triple_barrier_labels(prices, take_profit, stop_loss, max_holding):
 ```
 
 **Why Better**:
+
 - Triple barrier is industry-standard for ML trading signals
 - Risk-adjusted returns reduce noise
 - Multiple horizons capture different market dynamics
@@ -581,6 +600,7 @@ def create_triple_barrier_labels(prices, take_profit, stop_loss, max_holding):
 ---
 
 #### 3.3 Feature Selection to Reduce Overfitting
+
 **Current**: 56 features, no selection
 **Problem**: Many features are redundant or noisy, causing overfitting
 **Recommendation**: Implement feature selection pipeline
@@ -638,6 +658,7 @@ class FeatureSelector:
 ```
 
 **Why Better**:
+
 - Reduces overfitting on training data
 - Faster training and inference
 - More interpretable models
@@ -646,6 +667,7 @@ class FeatureSelector:
 ---
 
 #### 3.4 Implement Proper Ensemble Methods
+
 **Current**: Single XGBoost model (R²: 0.353)
 **Problem**: Single model is unstable and prone to overfitting
 **Recommendation**: Implement stacking ensemble
@@ -688,6 +710,7 @@ class StackingEnsemble:
 ```
 
 **Expected Improvement**:
+
 - R² improvement: 0.35 → 0.45-0.55
 - More stable predictions across market regimes
 - Reduces variance without increasing bias
@@ -695,6 +718,7 @@ class StackingEnsemble:
 ---
 
 #### 3.5 Add Market Regime Detection
+
 **Current**: Single model for all market conditions
 **Problem**: Markets behave differently in bull/bear/sideways regimes
 **Recommendation**: Train separate models per regime or use regime as feature
@@ -748,6 +772,7 @@ class MarketRegimeDetector:
 ```
 
 **Why Better**:
+
 - Captures non-stationarity in financial markets
 - Models can specialize for different conditions
 - Improves directional accuracy by 5-10%
@@ -758,6 +783,7 @@ class MarketRegimeDetector:
 ### 4. Additional Quick Wins
 
 #### 4.1 Enable XGBoost GPU Training
+
 ```python
 # In src/models/supervised/xgboost_model.py
 # Change tree_method for 10-50x speedup on GPU
@@ -770,6 +796,7 @@ params = {
 ```
 
 #### 4.2 Add Data Augmentation for Small Datasets
+
 ```python
 # Add noise injection and synthetic sample generation
 def augment_financial_data(df: pd.DataFrame, noise_level: float = 0.01) -> pd.DataFrame:
@@ -782,6 +809,7 @@ def augment_financial_data(df: pd.DataFrame, noise_level: float = 0.01) -> pd.Da
 ```
 
 #### 4.3 Implement Early Stopping Properly
+
 ```python
 # Current XGBoost doesn't use early stopping effectively
 # Add to training:
@@ -798,21 +826,25 @@ model.fit(
 ## Architecture Decision Records
 
 ### ADR-001: Fireducks vs Pandas
+
 **Decision**: Support both via factory pattern
 **Rationale**: Fireducks shows 25-50% speedup but is less mature
 **Trade-off**: Increased code complexity for performance gains
 
 ### ADR-002: MLflow for Experiment Tracking
+
 **Decision**: Use MLflow over alternatives (W&B, Neptune)
 **Rationale**: Open-source, self-hosted, good Airflow integration
 **Trade-off**: Less polished UI than commercial alternatives
 
 ### ADR-003: Multiple ML Frameworks
+
 **Decision**: Include XGBoost, LightGBM, CatBoost, scikit-learn
 **Rationale**: Different algorithms excel on different data characteristics
 **Trade-off**: Larger dependency footprint
 
 ### ADR-004: Google Cloud Run for Deployment
+
 **Decision**: Use Cloud Run over GKE or Compute Engine
 **Rationale**: Managed containers, auto-scaling, pay-per-use
 **Trade-off**: Cold start latency, max 60-min request timeout
@@ -821,7 +853,7 @@ model.fit(
 
 ## File Structure Reference
 
-```
+```bash
 src/
 ├── data/
 │   ├── ingestion.py          # API data fetching
@@ -864,16 +896,19 @@ scripts/
 ## Priority Implementation Order
 
 ### High Priority (Do First)
+
 1. Walk-forward validation (prevents overfitting)
 2. Feature selection (reduces complexity)
 3. Triple barrier labeling (better targets)
 
-### Medium Priority
+    **Medium Priority**
+
 4. Stacking ensemble (improves accuracy)
 5. FinBERT sentiment (replaces keyword matching)
 6. Redis feature caching (improves efficiency)
 
-### Lower Priority (Nice to Have)
+    **Lower Priority (Nice to Have)**
+
 7. Market regime detection
 8. GPU training enablement
 9. Data augmentation

@@ -5,36 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header class="header">
             <div class="logo">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="32" height="32" rx="8" fill="#4F46E5"/>
-                    <path d="M8 22L14 16L18 20L24 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <circle cx="24" cy="12" r="2" fill="#10B981"/>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="24" height="24" rx="4" fill="#1A1A1A"/>
+                    <path d="M6 17L10 12L13 15L18 9" stroke="#FAFAF7" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="18" cy="9" r="1.5" fill="#16A34A"/>
                 </svg>
                 <h1>Market Intelligence</h1>
             </div>
             <nav class="nav-links">
-                <a href="http://localhost:8080" target="_blank">Airflow</a>
-                <a href="http://localhost:5000" target="_blank">MLflow</a>
+                <a href="/docs" target="_blank">API Docs</a>
+                <a href="/health" target="_blank">Status</a>
             </nav>
         </header>
 
         <main class="main-content">
             <section class="hero">
-                <h2>AI-Powered Stock Predictions</h2>
-                <p>Real-time market analysis using machine learning</p>
+                <h2>Stock Predictions,<br>Powered by ML</h2>
+                <p>Real-time market analysis with machine learning models trained on technical indicators, sentiment, and price action.</p>
             </section>
 
             <section class="prediction-form">
                 <div class="input-group">
-                    <label for="symbol">Stock Symbol</label>
-                    <input type="text" id="symbol" placeholder="e.g., AAPL, GOOGL, MSFT" maxlength="5">
-                    <button id="predict-btn">Get Prediction</button>
+                    <div>
+                        <label for="symbol">Stock Symbol</label>
+                        <input type="text" id="symbol" placeholder="AAPL" maxlength="5">
+                    </div>
+                    <button id="predict-btn">Predict</button>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" id="include-features">
@@ -94,32 +95,27 @@
                     <div class="status-card">
                         <div class="status-indicator ready"></div>
                         <span class="status-label">Last Run</span>
-                        <span class="status-value" id="status-lastrun">-</span>
+                        <span class="status-value" id="status-lastrun">&mdash;</span>
                     </div>
                 </div>
             </section>
 
             <section class="models-section">
                 <h3>Available Models</h3>
-                <div class="models-grid" id="models-grid">
-                    <!-- Models will be loaded here -->
-                </div>
+                <div class="models-grid" id="models-grid"></div>
             </section>
         </main>
 
         <footer class="footer">
-            <p>Financial Market Intelligence MVP &copy; 2026 | Powered by Apache Airflow, MLflow & FastAPI</p>
+            <p>Financial Market Intelligence MVP &copy; 2026 &middot; Apache Airflow, MLflow & FastAPI</p>
         </footer>
     </div>
 
     <script>
-        // Load pipeline status on page load
         document.addEventListener('DOMContentLoaded', async () => {
-            await loadPipelineStatus();
-            await loadModels();
+            await Promise.all([loadPipelineStatus(), loadModels()]);
         });
 
-        // Handle prediction form submission
         document.getElementById('predict-btn').addEventListener('click', async () => {
             const symbol = document.getElementById('symbol').value.trim().toUpperCase();
             if (!symbol) {
@@ -130,15 +126,15 @@
             const includeFeatures = document.getElementById('include-features').checked;
             const btn = document.getElementById('predict-btn');
             btn.disabled = true;
-            btn.textContent = 'Loading...';
+            btn.textContent = 'Loading\u2026';
 
             try {
                 const response = await fetch('/predict', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         symbol: symbol,
-                        include_features: includeFeatures 
+                        include_features: includeFeatures
                     })
                 });
 
@@ -153,11 +149,10 @@
                 alert('Error: ' + error.message);
             } finally {
                 btn.disabled = false;
-                btn.textContent = 'Get Prediction';
+                btn.textContent = 'Predict';
             }
         });
 
-        // Handle Enter key in input
         document.getElementById('symbol').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 document.getElementById('predict-btn').click();
@@ -165,20 +160,20 @@
         });
 
         function displayPrediction(data, showFeatures) {
-            document.getElementById('results').style.display = 'block';
-            
+            const results = document.getElementById('results');
+            results.style.display = 'block';
+
             document.getElementById('result-symbol').textContent = data.symbol;
-            
+
             const directionEl = document.getElementById('result-direction');
             directionEl.textContent = data.direction;
             directionEl.className = 'direction-badge ' + data.direction;
-            
+
             document.getElementById('result-price').textContent = '$' + data.current_price.toFixed(2);
             document.getElementById('result-target').textContent = '$' + data.target_price.toFixed(2);
             document.getElementById('result-confidence').textContent = (data.confidence * 100).toFixed(0) + '%';
             document.getElementById('result-prediction').textContent = (data.prediction * 100).toFixed(2) + '%';
 
-            // Show features if requested
             const featuresSection = document.getElementById('features-section');
             if (showFeatures && data.features) {
                 featuresSection.style.display = 'block';
@@ -196,20 +191,19 @@
                 featuresSection.style.display = 'none';
             }
 
-            // Scroll to results
-            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+            results.scrollIntoView({ behavior: 'smooth' });
         }
 
         async function loadPipelineStatus() {
             try {
                 const response = await fetch('/pipeline/status');
                 const data = await response.json();
-                
+
                 document.getElementById('status-ingestion').textContent = data.data_ingestion;
                 document.getElementById('status-features').textContent = data.feature_engineering;
                 document.getElementById('status-training').textContent = data.model_training;
-                document.getElementById('status-lastrun').textContent = data.last_run ? 
-                    new Date(data.last_run).toLocaleString() : '-';
+                document.getElementById('status-lastrun').textContent = data.last_run ?
+                    new Date(data.last_run).toLocaleString() : '\u2014';
             } catch (error) {
                 console.error('Failed to load pipeline status:', error);
             }
@@ -219,17 +213,17 @@
             try {
                 const response = await fetch('/models');
                 const data = await response.json();
-                
+
                 const modelsGrid = document.getElementById('models-grid');
                 modelsGrid.innerHTML = data.models.map(model => `
                     <div class="model-card">
                         <h4>${model.name}</h4>
                         <div class="model-info">
-                            <span>Version: ${model.version}</span>
-                            <span>Accuracy: ${model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : 'N/A'}</span>
+                            <span>v${model.version}</span>
+                            <span>${model.accuracy ? (model.accuracy * 100).toFixed(1) + '%' : '\u2014'}</span>
                         </div>
                         <div class="model-features">
-                            <strong>Features:</strong> ${model.features.slice(0, 4).join(', ')}...
+                            ${model.features.slice(0, 4).join(', ')}${model.features.length > 4 ? ' +' + (model.features.length - 4) + ' more' : ''}
                         </div>
                     </div>
                 `).join('');

@@ -108,10 +108,10 @@ deploy_services() {
         --platform=managed \
         --memory=2Gi \
         --cpu=2 \
-        --port=8080 \
         --min-instances=0 \
         --max-instances=10 \
-        --timeout=600 \
+        --timeout=300 \
+        --health-check-timeout=300 \
         --set-env-vars="DEMO_MODE=true" \
         --allow-unauthenticated \
         --quiet

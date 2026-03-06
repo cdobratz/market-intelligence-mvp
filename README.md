@@ -9,7 +9,7 @@
 
 ## Live Demo
 
-**[Try the live dashboard](https://market-intel-api-1001565765695.us-west1.run.app/)** -- no setup required. Enter any stock symbol (AAPL, GOOGL, MSFT) to get instant price predictions with confidence scores, technical indicators, and pipeline status.
+**[Try the live dashboard](https://market-intel-api-1001565765695.us-west1.run.app/)** no setup required. Enter any stock symbol (AAPL, GOOGL, MSFT) to get instant price predictions with confidence scores, technical indicators, and pipeline status.
 
 ## What It Does
 

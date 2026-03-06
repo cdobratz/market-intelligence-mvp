@@ -544,7 +544,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **Cassidy** - [GitHub Profile](https://github.com/yourusername)
 
-Project Link: [https://github.com/yourusername/market-intelligence-mvp](https://github.com/yourusername/market-intelligence-mvp)
+Project Link: [Live Dashboard](https://market-intel-api-1001565765695.us-west1.run.app/)
 
 ---
 

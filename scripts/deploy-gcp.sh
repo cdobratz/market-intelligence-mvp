@@ -111,7 +111,6 @@ deploy_services() {
         --min-instances=0 \
         --max-instances=10 \
         --timeout=300 \
-        --health-check-timeout=300 \
         --set-env-vars="DEMO_MODE=true" \
         --allow-unauthenticated \
         --quiet

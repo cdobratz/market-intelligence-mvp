@@ -16,9 +16,12 @@
 
 set -e
 
+# Enable BuildKit for cross-platform builds
+export DOCKER_BUILDKIT=1
+
 # Configuration - UPDATE THESE VALUES
 PROJECT_ID="${GCP_PROJECT_ID:-your-project-id}"
-REGION="${GCP_REGION:-us-central1}"
+REGION="${GCP_REGION:-us-west1}"
 REPO="market-intelligence"
 
 # Service names
@@ -91,7 +94,7 @@ build_and_push() {
 
     # Build API container only
     log_info "Building and pushing API container..."
-    docker build -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" .
+    docker build --platform linux/amd64 -f docker/Dockerfile.api -t "${REGISTRY}/api:latest" .
     docker push "${REGISTRY}/api:latest"
 }
 

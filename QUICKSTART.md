@@ -224,22 +224,20 @@ docker-compose restart airflow-scheduler
 
 ## Next Steps
 
-1. ✅ **Explore the Roadmap**: `cat warp.md`
-2. ✅ **Read Full README**: `cat README.md`
-3. ✅ **Review DAGs**: Check out `airflow/dags/` folder
-4. ✅ **Customize Features**: Edit feature engineering in `src/features/`
-5. ✅ **Add Models**: Implement ML models in `src/models/`
-6. ✅ **Run Benchmarks**: `python benchmarks/pandas_vs_fireducks.py`
+1. **Explore the Roadmap**: See [docs/roadmap.md](docs/roadmap.md)
+2. **Read Full README**: See [README.md](README.md)
+3. **Review DAGs**: Check out `airflow/dags/` folder
+4. **Customize Features**: Edit feature engineering in `src/features/`
+5. **Add Models**: Implement ML models in `src/models/`
+6. **Run Benchmarks**: `python benchmarks/pandas_vs_fireducks.py`
 
 ## Getting Help
 
-- **Project Issues**: Check `warp.md` for common issues
+- **Troubleshooting**: See [docs/troubleshooting.md](docs/troubleshooting.md)
 - **Airflow Docs**: https://airflow.apache.org/docs/
 - **MLflow Docs**: https://mlflow.org/docs/
 - **Python Errors**: Check logs with `docker-compose logs -f`
 
 ---
 
-**🎉 You're all set! Happy coding!**
-
-For a deeper dive, check out the full [README.md](README.md) and [warp.md](warp.md).
+For a deeper dive, check out the full [README.md](README.md) and [docs/roadmap.md](docs/roadmap.md).

@@ -102,24 +102,30 @@ services:
 
   # MLflow Tracking Server
   mlflow:
-    image: python:3.11-slim
+    image: mlflow/mlflow:latest
     ports:
       - "5000:5000"
     volumes:
       - mlflow-data:/mlflow
     environment:
       MLFLOW_HOST: 0.0.0.0
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     command: >
-      bash -c "
-        pip install --no-cache-dir mlflow==2.9.2 psycopg2-binary boto3 &&
-        mlflow server 
-          --backend-store-uri postgresql://airflow:airflow@postgres/mlflow
-          --default-artifact-root /mlflow/artifacts
-          --host 0.0.0.0
-          --port 5000
-      "
+      mlflow server 
+        --backend-store-uri postgresql+psycopg2://airflow:airflow@postgres/mlflow
+        --default-artifact-root /mlflow/artifacts
+        --host 0.0.0.0
+        --port 5000
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: always
 
   # Redis (for caching and as message broker if needed)

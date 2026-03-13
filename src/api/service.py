@@ -13,6 +13,16 @@ import numpy as np
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+# Try to import MLflow
+try:
+    import mlflow
+    from mlflow.tracking import MlflowClient
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    mlflow = None
+    MlflowClient = None
+
 # Try to import data ingestion - fallback to demo if not available
 try:
     from src.data.ingestion import fetch_stock_data
@@ -65,7 +75,38 @@ class PredictionService:
 
     def _init_model(self):
         """Initialize the ML model."""
-        # Try to load from MLflow or local file
+        # Try to load from MLflow first
+        mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+        
+        if MLFLOW_AVAILABLE:
+            try:
+                mlflow.set_tracking_uri(mlflow_tracking_uri)
+                client = MlflowClient()
+                
+                # Try to find a registered model
+                try:
+                    # Look for models in the registry
+                    models = client.list_registered_models()
+                    if models:
+                        # Get the latest version of the first model
+                        latest_model = models[0]
+                        model_name = latest_model.name
+                        
+                        # Get latest version
+                        latest_versions = client.get_latest_versions(model_name)
+                        if latest_versions:
+                            # Load the model
+                            model_uri = f"models:/{model_name}/latest"
+                            self.model = mlflow.pyfunc.load_model(model_uri)
+                            self.model_loaded = True
+                            logger.info(f"Model loaded from MLflow: {model_name}")
+                            return
+                except Exception as e:
+                    logger.warning(f"Could not load from MLflow registry: {e}")
+            except Exception as e:
+                logger.warning(f"Could not connect to MLflow: {e}")
+        
+        # Try to load from local file
         model_path = os.path.join(
             os.path.dirname(__file__), '..', '..', 'models', 'production'
         )
@@ -74,11 +115,16 @@ class PredictionService:
             try:
                 import joblib
                 # Load model if exists
-                self.model = None  # Would load actual model here
-                self.model_loaded = True
-                logger.info(f"Model loaded from {model_path}")
+                model_files = [f for f in os.listdir(model_path) if f.endswith('.pkl')]
+                if model_files:
+                    self.model = joblib.load(os.path.join(model_path, model_files[0]))
+                    self.model_loaded = True
+                    logger.info(f"Model loaded from {model_path}")
+                else:
+                    logger.info("Running in demo mode - no model files found")
             except Exception as e:
                 logger.warning(f"Could not load model: {e}")
+                logger.info("Running in demo mode")
         else:
             logger.info("Running in demo mode - using synthetic predictions")
 
@@ -222,10 +268,19 @@ class PredictionService:
         
         if self.model_loaded and hasattr(self, 'model') and self.model is not None:
             # Use actual model prediction
-            # This would require proper feature preparation
-            prediction = 0.0  # Would be model.predict(features)
+            try:
+                # Prepare features for prediction
+                feature_cols = [col for col in features_df.columns 
+                              if col not in ['open', 'high', 'low', 'close', 'volume', 'date']]
+                X_pred = features_df[feature_cols].iloc[[-1]].fillna(0)
+                prediction = float(self.model.predict(X_pred)[0])
+                logger.info(f"Model prediction: {prediction}")
+            except Exception as e:
+                logger.warning(f"Model prediction failed: {e}, using demo prediction")
+                prediction = self._demo_prediction(features_df)
         else:
             # Demo prediction based on technical signals
+            logger.info("Using demo prediction based on technical indicators")
             prediction = self._demo_prediction(features_df)
         
         # Determine direction and confidence

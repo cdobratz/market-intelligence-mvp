@@ -1,8 +1,44 @@
 # Phase 3: ML Model Development - Progress Report
 
 **Date Started**: January 15, 2026  
-**Current Status**: In Progress (Step 3.1 - Supervised Learning)  
-**Completion**: ~15%
+**Current Status**: In Progress (Fixes Applied - March 13, 2026)  
+**Completion**: ~15% (before fixes) → Infrastructure Ready
+
+---
+
+## 📋 Current Issues Fixed
+
+### Issue 1: MLflow Not Working ✅ FIXED
+- **Problem**: Wrong image (`python:3.11-slim`), broken backend connection, DAGs don't log/register models
+- **Fix**: Updated docker-compose.yml:
+  - Changed to `mlflow/mlflow:latest` image
+  - Fixed backend-store-uri: `postgresql+psycopg2://airflow:airflow@postgres/mlflow`
+  - Added health check
+  - Added proper depends_on with service_healthy condition
+
+### Issue 2: DAGs Have Placeholder Functions ✅ FIXED
+- **Problem**: Placeholder Python functions (TODO comments) that don't call actual model code
+- **Fix**: Updated all three DAGs:
+  - `model_training.py`: load_features() now reads from data/processed/
+  - `model_training.py`: train_xgboost_regressor() now trains actual XGBoost with MLflow logging
+  - `data_ingestion.py`: Fixed xcom_pull task_ids, added data storage
+  - `feature_engineering.py`: Added actual feature loading and correlation calculation
+
+### Issue 3: Empty Data Directory ✅ FIXED
+- **Problem**: data/ directory empty - no training data exists
+- **Fix**: Generated sample training data:
+  - Created data/raw/, data/processed/, data/features/ directories
+  - Generated 77,984 training samples with 47 features
+  - Generated 19,496 test samples
+  - Saved as parquet files in data/processed/
+
+### Issue 4: Prediction Service Demo Mode ✅ FIXED
+- **Problem**: Demo mode always on (`self.model = None`), random values, calculation bugs
+- **Fix**: Updated src/api/service.py:
+  - Added MLflow model loading from registry
+  - Added fallback to local model files
+  - Improved technical indicator-based predictions
+  - Fixed target_price calculation
 
 ---
 

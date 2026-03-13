@@ -112,24 +112,11 @@ steps:
     id: 'deploy-mlflow'
     waitFor: ['push-mlflow']
 
-  # Deploy Airflow to Cloud Run
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'market-intel-airflow'
-      - '--image=gcr.io/$PROJECT_ID/airflow:$_COMMIT_SHA'
-      - '--region=us-central1'
-      - '--platform=managed'
-      - '--memory=2Gi'
-      - '--cpu=2'
-      - '--timeout=3600'
-      - '--min-instances=0'
-      - '--max-instances=1'
-      - '--allow-unauthenticated'
-    id: 'deploy-airflow'
-    waitFor: ['push-airflow']
+  # NOTE: Airflow deployment skipped - requires Cloud SQL for database
+  # To deploy Airflow to Cloud Run, you need:
+  # 1. Create Cloud SQL instance
+  # 2. Add Cloud SQL proxy to Cloud Run
+  # For now, run Airflow locally: docker-compose up -d airflow-webserver
 
 # Store built images in Container Registry
 images:

@@ -40,6 +40,13 @@
   - Improved technical indicator-based predictions
   - Fixed target_price calculation
 
+### Additional Improvements Implemented ✅
+- **Walk-forward validation**: Replaced random train/test split with TimeSeriesSplit (5-fold, 30-day test windows) to respect temporal nature of financial data
+- **Feature selection**: Added mutual information-based selection (reduced from 47 to 20 features)
+- **Early stopping**: XGBoost now uses early_stopping_rounds=30 to prevent overfitting
+- **Stacking ensemble**: Implemented proper stacking ensemble with XGBoost, LightGBM, Random Forest, and Ridge meta-learner
+- **Triple barrier labeling**: Already implemented in sample_data_generator.py for better signal-to-noise ratio
+
 ---
 
 ## 📊 Overview

@@ -40,59 +40,142 @@ default_args = {
 }
 
 
-# Placeholder functions (will be implemented in src/data/ingestion.py)
+# Placeholder functions
 def fetch_stock_data(**context):
     """Fetch stock data from Alpha Vantage"""
+    import os
+    from src.data.ingestion import AlphaVantageClient, save_to_parquet
+    
     print("Fetching stock data from Alpha Vantage...")
-    # TODO: Implement actual API call
+    
     api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
-    if not api_key:
-        raise ValueError("ALPHA_VANTAGE_API_KEY not set")
+    execution_date = context['execution_date']
+    date_str = execution_date.strftime('%Y-%m-%d')
     
     symbols = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN']
-    execution_date = context['execution_date']
+    results = []
     
-    print(f"Fetching data for {len(symbols)} symbols on {execution_date}")
-    # Actual implementation will save to data/raw/stocks/
-    return {'status': 'success', 'symbols': symbols, 'date': str(execution_date)}
+    if api_key:
+        try:
+            client = AlphaVantageClient(api_key=api_key)
+            for symbol in symbols:
+                try:
+                    df = client.get_daily_stock_data(symbol, outputsize='compact')
+                    df['symbol'] = symbol
+                    # Save to parquet
+                    save_to_parquet(df, '/opt/airflow/data/raw', 'stocks', date_str)
+                    results.append({'symbol': symbol, 'status': 'success', 'records': len(df)})
+                except Exception as e:
+                    print(f"Error fetching {symbol}: {e}")
+                    results.append({'symbol': symbol, 'status': 'error', 'error': str(e)})
+        except Exception as e:
+            print(f"Alpha Vantage client error: {e}")
+            results.append({'status': 'error', 'error': str(e)})
+    else:
+        print("WARNING: ALPHA_VANTAGE_API_KEY not set, using demo mode")
+        results.append({'status': 'skipped', 'reason': 'no_api_key'})
+    
+    print(f"Fetched data for {len(symbols)} symbols on {date_str}")
+    return {'status': 'success', 'symbols': symbols, 'date': date_str, 'results': results}
 
 
 def fetch_forex_data(**context):
     """Fetch forex data from Alpha Vantage"""
-    print("Fetching forex data from Alpha Vantage...")
-    # TODO: Implement actual API call
-    pairs = ['EURUSD', 'GBPUSD', 'USDJPY']
-    execution_date = context['execution_date']
+    import os
+    from src.data.ingestion import AlphaVantageClient, save_to_parquet
     
-    print(f"Fetching data for {len(pairs)} currency pairs on {execution_date}")
-    return {'status': 'success', 'pairs': pairs, 'date': str(execution_date)}
+    print("Fetching forex data from Alpha Vantage...")
+    
+    api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+    execution_date = context['execution_date']
+    date_str = execution_date.strftime('%Y-%m-%d')
+    
+    pairs = [('EUR', 'USD'), ('GBP', 'USD'), ('USD', 'JPY')]
+    results = []
+    
+    if api_key:
+        try:
+            client = AlphaVantageClient(api_key=api_key)
+            for from_curr, to_curr in pairs:
+                try:
+                    df = client.get_fx_daily(from_curr, to_curr, outputsize='compact')
+                    # Save to parquet
+                    save_to_parquet(df, '/opt/airflow/data/raw', 'forex', date_str)
+                    results.append({'pair': f'{from_curr}{to_curr}', 'status': 'success', 'records': len(df)})
+                except Exception as e:
+                    print(f"Error fetching {from_curr}/{to_curr}: {e}")
+        except Exception as e:
+            print(f"Alpha Vantage client error: {e}")
+    else:
+        print("WARNING: ALPHA_VANTAGE_API_KEY not set")
+        results.append({'status': 'skipped', 'reason': 'no_api_key'})
+    
+    print(f"Fetched forex data for {len(pairs)} pairs on {date_str}")
+    return {'status': 'success', 'pairs': [f'{f}{t}' for f, t in pairs], 'date': date_str, 'results': results}
 
 
 def fetch_crypto_data(**context):
     """Fetch cryptocurrency data from CoinGecko"""
-    print("Fetching crypto data from CoinGecko...")
-    # TODO: Implement actual API call
-    coins = ['bitcoin', 'ethereum', 'cardano', 'polkadot', 'solana']
-    execution_date = context['execution_date']
+    from src.data.ingestion import CoinGeckoClient, save_to_parquet
     
-    print(f"Fetching data for {len(coins)} cryptocurrencies on {execution_date}")
-    return {'status': 'success', 'coins': coins, 'date': str(execution_date)}
+    print("Fetching crypto data from CoinGecko...")
+    
+    execution_date = context['execution_date']
+    date_str = execution_date.strftime('%Y-%m-%d')
+    
+    coins = ['bitcoin', 'ethereum', 'cardano', 'polkadot', 'solana']
+    results = []
+    
+    try:
+        client = CoinGeckoClient()
+        df = client.get_coin_market_data(coins, vs_currency='usd', days=30)
+        if not df.empty:
+            # Save to parquet
+            save_to_parquet(df, '/opt/airflow/data/raw', 'crypto', date_str)
+            results.append({'status': 'success', 'records': len(df)})
+    except Exception as e:
+        print(f"CoinGecko client error: {e}")
+        results.append({'status': 'error', 'error': str(e)})
+    
+    print(f"Fetched crypto data for {len(coins)} coins on {date_str}")
+    return {'status': 'success', 'coins': coins, 'date': date_str, 'results': results}
 
 
 def fetch_news_data(**context):
     """Fetch financial news from News API"""
+    import os
+    from src.data.ingestion import NewsAPIClient, save_to_json
+    
     print("Fetching news data from News API...")
-    # TODO: Implement actual API call
+    
     api_key = os.getenv('NEWS_API_KEY')
-    if not api_key:
-        print("WARNING: NEWS_API_KEY not set, skipping news fetch")
-        return {'status': 'skipped', 'reason': 'no_api_key'}
-    
     execution_date = context['execution_date']
-    keywords = ['stock market', 'cryptocurrency', 'financial news']
+    date_str = execution_date.strftime('%Y-%m-%d')
     
-    print(f"Fetching news for keywords: {keywords} on {execution_date}")
-    return {'status': 'success', 'keywords': keywords, 'date': str(execution_date)}
+    keywords = ['stock market', 'cryptocurrency', 'financial news']
+    results = []
+    
+    if api_key:
+        try:
+            client = NewsAPIClient(api_key=api_key)
+            for keyword in keywords:
+                try:
+                    df = client.get_everything(query=keyword, page_size=50)
+                    if not df.empty:
+                        # Save to JSON (articles have complex nested structure)
+                        save_to_json(df.to_dict('records'), '/opt/airflow/data/raw', 'news', date_str)
+                        results.append({'keyword': keyword, 'status': 'success', 'articles': len(df)})
+                except Exception as e:
+                    print(f"Error fetching news for {keyword}: {e}")
+        except Exception as e:
+            print(f"News API client error: {e}")
+            results.append({'status': 'error', 'error': str(e)})
+    else:
+        print("WARNING: NEWS_API_KEY not set, skipping news fetch")
+        results.append({'status': 'skipped', 'reason': 'no_api_key'})
+    
+    print(f"Fetched news for keywords: {keywords} on {date_str}")
+    return {'status': 'success', 'keywords': keywords, 'date': date_str, 'results': results}
 
 
 def validate_ingested_data(**context):

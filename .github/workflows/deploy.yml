@@ -53,11 +53,11 @@ jobs:
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
           
-          # Trigger Cloud Build
+          # Trigger Cloud Build with all required substitutions
           gcloud builds submit \
             --config=cloudbuild.yaml \
             --region=us-central1 \
-            --substitutions=COMMIT_SHA=$COMMIT_SHA \
+            --substitutions=COMMIT_SHA=$COMMIT_SHA,_REGION=us-central1,PROJECT_ID=n8nclyt \
             --verbosity=info
 
       - name: Get Cloud Run URLs
@@ -67,15 +67,4 @@ jobs:
           echo "API: $(gcloud run services describe market-intel-api --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
           echo "MLflow: $(gcloud run services describe market-intel-mlflow --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
           echo "Airflow: $(gcloud run services describe market-intel-airflow --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
-
-      - name: Notify on failure
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Deployment Failed',
-              body: 'Cloud Build deployment failed. Check Cloud Build history for details.'
-            })
+        continue-on-error: true

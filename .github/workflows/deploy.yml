@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
-      id-token: 'write'  # Required for Workload Identity
+      id-token: 'write'
 
     steps:
       - name: Checkout code
@@ -41,13 +41,17 @@ jobs:
       - name: Configure gcloud
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          project_id: n8nclyt
 
       - name: Set Cloud Build substitutions
         run: |
-          # Get the short commit SHA
           COMMIT_SHA=${{ github.sha }}
           echo "Commit SHA: $COMMIT_SHA"
+          
+          # Enable required APIs
+          gcloud services enable cloudresourcemanager.googleapis.com
+          gcloud services enable cloudbuild.googleapis.com
+          gcloud services enable run.googleapis.com
           
           # Trigger Cloud Build
           gcloud builds submit \

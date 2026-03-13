@@ -40,17 +40,48 @@ def load_raw_data(**context):
     """Load raw data from storage"""
     import pandas as pd
     import os
+    from pathlib import Path
     
     print("Loading raw data from data lake...")
     execution_date = context['execution_date']
     data_path = f"/opt/airflow/data/raw/{execution_date.strftime('%Y-%m-%d')}"
     
-    # Check if data exists, fall back to processed data
-    if not os.path.exists(data_path):
-        print(f"Raw data not found at {data_path}, checking processed data...")
+    # First check for newly ingested data
+    raw_stocks_path = Path(data_path) / "stocks"
+    raw_forex_path = Path(data_path) / "forex" 
+    raw_crypto_path = Path(data_path) / "crypto"
+    
+    loaded_data = {}
+    
+    # Load stocks
+    if raw_stocks_path.exists():
+        stock_files = list(raw_stocks_path.glob("*.parquet"))
+        if stock_files:
+            stocks = pd.concat([pd.read_parquet(f) for f in stock_files])
+            loaded_data['stocks'] = stocks
+            print(f"Loaded {len(stocks)} stock records")
+    
+    # Load forex
+    if raw_forex_path.exists():
+        forex_files = list(raw_forex_path.glob("*.parquet"))
+        if forex_files:
+            forex = pd.concat([pd.read_parquet(f) for f in forex_files])
+            loaded_data['forex'] = forex
+            print(f"Loaded {len(forex)} forex records")
+    
+    # Load crypto
+    if raw_crypto_path.exists():
+        crypto_files = list(raw_crypto_path.glob("*.parquet"))
+        if crypto_files:
+            crypto = pd.concat([pd.read_parquet(f) for f in crypto_files])
+            loaded_data['crypto'] = crypto
+            print(f"Loaded {len(crypto)} crypto records")
+    
+    # Fall back to processed data if no raw data exists
+    if not loaded_data:
+        print(f"No raw data found at {data_path}, checking processed data...")
         processed_path = "/opt/airflow/data/processed"
         if os.path.exists(processed_path):
-            # Load processed data
             train_file = os.path.join(processed_path, "train_data.parquet")
             if os.path.exists(train_file):
                 df = pd.read_parquet(train_file)
@@ -61,8 +92,10 @@ def load_raw_data(**context):
                     'data_type': 'processed'
                 }
     
-    print(f"Loading data from: {data_path}")
-    return {'data_path': data_path, 'records': 10000, 'data_type': 'raw'}
+    total_records = sum(len(d) for d in loaded_data.values())
+    print(f"Total raw data loaded: {total_records} records")
+    
+    return {'data_path': data_path, 'records': total_records, 'data_type': 'raw', 'sources': list(loaded_data.keys())}
 
 
 def calculate_technical_indicators(**context):

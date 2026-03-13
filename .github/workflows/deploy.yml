@@ -1,0 +1,77 @@
+# =============================================================================
+# GitHub Actions Workflow - Trigger Cloud Build on Push/Merge
+#
+# This workflow triggers Google Cloud Build when:
+# - Code is pushed to main or development branch
+# - A PR is merged to main
+# =============================================================================
+
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+jobs:
+  trigger-cloud-build:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'  # Required for Workload Identity
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Set Cloud Build substitutions
+        run: |
+          # Get the short commit SHA
+          COMMIT_SHA=${{ github.sha }}
+          echo "Commit SHA: $COMMIT_SHA"
+          
+          # Trigger Cloud Build
+          gcloud builds submit \
+            --config=cloudbuild.yaml \
+            --region=us-central1 \
+            --substitutions=COMMIT_SHA=$COMMIT_SHA \
+            --verbosity=info
+
+      - name: Get Cloud Run URLs
+        if: success()
+        run: |
+          echo "=== Deployed Services ==="
+          echo "API: $(gcloud run services describe market-intel-api --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
+          echo "MLflow: $(gcloud run services describe market-intel-mlflow --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
+          echo "Airflow: $(gcloud run services describe market-intel-airflow --region=us-central1 --format='value(status.url)' 2>/dev/null || echo 'not deployed')"
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Deployment Failed',
+              body: 'Cloud Build deployment failed. Check Cloud Build history for details.'
+            })

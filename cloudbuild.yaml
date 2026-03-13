@@ -150,5 +150,4 @@ timeout: '1800s'
 
 # Substitutions (can be overridden)
 substitutions:
-  _REGION: 'us-central1'
   _COMMIT_SHA: 'latest'

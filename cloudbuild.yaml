@@ -14,7 +14,7 @@ steps:
       - '-f'
       - 'docker/Dockerfile.airflow'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/airflow:$_COMMIT_SHA'
       - '-t'
       - 'gcr.io/$PROJECT_ID/airflow:latest'
       - '.'
@@ -27,7 +27,7 @@ steps:
       - '-f'
       - 'docker/Dockerfile.mlflow'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/mlflow:$_COMMIT_SHA'
       - '-t'
       - 'gcr.io/$PROJECT_ID/mlflow:latest'
       - '.'
@@ -40,7 +40,7 @@ steps:
       - '-f'
       - 'docker/Dockerfile.api'
       - '-t'
-      - 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
+      - 'gcr.io/$PROJECT_ID/api:$_COMMIT_SHA'
       - '-t'
       - 'gcr.io/$PROJECT_ID/api:latest'
       - '.'
@@ -48,7 +48,7 @@ steps:
 
   # Push Airflow container
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/airflow:$_COMMIT_SHA']
     id: 'push-airflow'
     waitFor: ['build-airflow']
 
@@ -58,7 +58,7 @@ steps:
 
   # Push MLflow container
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/mlflow:$_COMMIT_SHA']
     id: 'push-mlflow'
     waitFor: ['build-mlflow']
 
@@ -68,7 +68,7 @@ steps:
 
   # Push API container
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA']
+    args: ['push', 'gcr.io/$PROJECT_ID/api:$_COMMIT_SHA']
     id: 'push-api'
     waitFor: ['build-api']
 
@@ -83,7 +83,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'market-intel-api'
-      - '--image=gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/api:$_COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
       - '--memory=2Gi'
@@ -101,7 +101,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'market-intel-mlflow'
-      - '--image=gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/mlflow:$_COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
       - '--memory=1Gi'
@@ -119,7 +119,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'market-intel-airflow'
-      - '--image=gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
+      - '--image=gcr.io/$PROJECT_ID/airflow:$_COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
       - '--memory=2Gi'
@@ -133,11 +133,11 @@ steps:
 
 # Store built images in Container Registry
 images:
-  - 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/airflow:$_COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/airflow:latest'
-  - 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/mlflow:$_COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/mlflow:latest'
-  - 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/api:$_COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/api:latest'
 
 # Build configuration
@@ -151,3 +151,4 @@ timeout: '1800s'
 # Substitutions (can be overridden)
 substitutions:
   _REGION: 'us-central1'
+  _COMMIT_SHA: 'latest'

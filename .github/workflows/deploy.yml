@@ -45,19 +45,17 @@ jobs:
 
       - name: Set Cloud Build substitutions
         run: |
-          COMMIT_SHA=${{ github.sha }}
-          echo "Commit SHA: $COMMIT_SHA"
+          echo "Triggering Cloud Build..."
           
           # Enable required APIs
           gcloud services enable cloudresourcemanager.googleapis.com
           gcloud services enable cloudbuild.googleapis.com
           gcloud services enable run.googleapis.com
           
-          # Trigger Cloud Build with all required substitutions
-          gcloud builds submit \
+          # Trigger Cloud Build (let it use default substitutions from cloudbuild.yaml)
+          gcloud builds submit . \
             --config=cloudbuild.yaml \
             --region=us-central1 \
-            --substitutions=COMMIT_SHA=$COMMIT_SHA,_REGION=us-central1,PROJECT_ID=n8nclyt \
             --verbosity=info
 
       - name: Get Cloud Run URLs

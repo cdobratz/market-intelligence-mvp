@@ -18,12 +18,30 @@ from airflow.utils.task_group import TaskGroup
 from airflow.sensors.external_task import ExternalTaskSensor
 import os
 import sys
+import logging
+import json
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
+sys.path.insert(0, '/opt/airflow/src')
 
+logger = logging.getLogger(__name__)
 
-# Default arguments
+DATA_BASE_PATH = os.getenv('DATA_PATH', '/opt/airflow/data')
+MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
+MODEL_SAVE_PATH = os.getenv('MODEL_PATH', '/opt/airflow/models')
+
+# Target column for regression
+TARGET_COL = 'target_return'
+
+# Columns to exclude from features
+EXCLUDE_COLS = [
+    'date', 'symbol', 'target_return', 'target_direction',
+    'return_1d', 'return_5d', 'return_10d', 'return_20d',
+    'direction_1d', 'direction_5d', 'direction_class_5d',
+    'triple_barrier', 'risk_adj_return_5d', 'vol_20d',
+]
+
 default_args = {
     'owner': 'market-intelligence',
     'depends_on_past': True,
@@ -36,357 +54,770 @@ default_args = {
 }
 
 
-# Placeholder functions
+def _setup_mlflow(experiment_name='market-intelligence'):
+    """Configure MLflow tracking."""
+    import mlflow
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    try:
+        mlflow.set_experiment(experiment_name)
+        logger.info(f"MLflow tracking URI: {MLFLOW_TRACKING_URI}")
+    except Exception as e:
+        logger.warning(f"Could not connect to MLflow: {e}. Metrics will be logged locally.")
+
+
+def _get_feature_columns(df):
+    """Get feature columns, excluding targets and metadata."""
+    import numpy as np
+    feature_cols = [
+        c for c in df.columns
+        if c not in EXCLUDE_COLS
+        and df[c].dtype in [np.float64, np.float32, np.int64, np.int32]
+    ]
+    return feature_cols
+
+
 def load_features(**context):
-    """Load engineered features from feature store"""
-    print("Loading features from feature store...")
-    
+    """Load engineered features from feature store."""
+    import pandas as pd
+    from pathlib import Path
+    from data.sample_data_generator import generate_training_data, create_targets
+
+    # Try loading from feature store
+    latest_features = Path(DATA_BASE_PATH) / 'features' / 'latest' / 'features.parquet'
     execution_date = context['execution_date']
-    feature_path = f"/opt/airflow/data/features/{execution_date.strftime('%Y-%m-%d')}"
-    
-    print(f"Loading features from: {feature_path}")
-    # TODO: Implement actual feature loading
-    
+    date_features = Path(DATA_BASE_PATH) / 'features' / execution_date.strftime('%Y-%m-%d') / 'features.parquet'
+
+    df = None
+    source = None
+    for f in [date_features, latest_features]:
+        if f.exists():
+            df = pd.read_parquet(f)
+            source = str(f)
+            logger.info(f"Loaded features from {f}: {df.shape}")
+            break
+
+    if df is None:
+        logger.warning("No feature store data found, generating synthetic training data")
+        train_df, test_df = generate_training_data(
+            output_dir=str(Path(DATA_BASE_PATH) / 'processed'),
+            n_samples=1000,
+            n_symbols=5,
+        )
+        df = pd.concat([train_df, test_df], ignore_index=True)
+        source = 'synthetic'
+
+    # Create target variables if not present
+    if TARGET_COL not in df.columns and 'close' in df.columns:
+        from data.sample_data_generator import create_targets
+        df = create_targets(df, close_col='close')
+
+    # Save combined features for downstream tasks
+    output_path = Path(DATA_BASE_PATH) / 'training'
+    output_path.mkdir(parents=True, exist_ok=True)
+    output_file = output_path / 'training_data.parquet'
+    df.to_parquet(output_file)
+
+    feature_cols = _get_feature_columns(df)
+
+    logger.info(f"Training data: {df.shape}, {len(feature_cols)} features, source: {source}")
     return {
-        'feature_path': feature_path,
-        'n_features': 50,
-        'n_samples': 10000
+        'data_file': str(output_file),
+        'n_features': len(feature_cols),
+        'n_samples': len(df),
+        'feature_columns': feature_cols[:20],  # XCom size limit
+        'source': source,
     }
 
 
 def prepare_train_test_split(**context):
-    """Split data into train/validation/test sets"""
-    print("Preparing train/validation/test split...")
-    
-    # Time-series aware splitting
-    # - Train: 70%
-    # - Validation: 15%
-    # - Test: 15%
-    
+    """Split data into train/validation/test sets (time-series aware)."""
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+
+    ti = context['task_instance']
+    features_info = ti.xcom_pull(task_ids='load_features')
+    df = pd.read_parquet(features_info['data_file'])
+
+    # Clean data
+    feature_cols = _get_feature_columns(df)
+
+    # Drop rows with NaN target
+    if TARGET_COL in df.columns:
+        df = df.dropna(subset=[TARGET_COL])
+
+    # Replace infinities
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+    df[feature_cols] = df[feature_cols].fillna(0)
+
+    # Time-series aware split: 70% train, 15% val, 15% test
+    if 'date' in df.columns:
+        df = df.sort_values('date')
+    n = len(df)
+    train_end = int(n * 0.70)
+    val_end = int(n * 0.85)
+
+    train_df = df.iloc[:train_end]
+    val_df = df.iloc[train_end:val_end]
+    test_df = df.iloc[val_end:]
+
+    # Save splits
+    output_path = Path(DATA_BASE_PATH) / 'training'
+    train_df.to_parquet(output_path / 'train.parquet')
+    val_df.to_parquet(output_path / 'val.parquet')
+    test_df.to_parquet(output_path / 'test.parquet')
+
     split_info = {
-        'train_size': 7000,
-        'val_size': 1500,
-        'test_size': 1500,
-        'split_date': '2024-10-01'
+        'train_size': len(train_df),
+        'val_size': len(val_df),
+        'test_size': len(test_df),
+        'n_features': len(feature_cols),
+        'feature_columns': feature_cols,
+        'train_file': str(output_path / 'train.parquet'),
+        'val_file': str(output_path / 'val.parquet'),
+        'test_file': str(output_path / 'test.parquet'),
     }
-    
-    print(f"Split info: {split_info}")
+
+    logger.info(f"Split: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
     return split_info
 
 
-# Supervised Learning Models
 def train_xgboost_regressor(**context):
-    """Train XGBoost regression model"""
-    print("Training XGBoost Regressor...")
-    
-    # TODO: Implement actual training
-    # - Load train data
-    # - Define hyperparameters
-    # - Train model
-    # - Log to MLflow
-    
-    model_info = {
-        'model_type': 'xgboost_regressor',
-        'hyperparameters': {
-            'n_estimators': 100,
-            'max_depth': 6,
-            'learning_rate': 0.1
-        },
-        'training_time': 45.2,
-        'metrics': {
-            'train_rmse': 0.05,
-            'val_rmse': 0.08
+    """Train XGBoost regression model with MLflow tracking."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-supervised')
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    val_df = pd.read_parquet(split_info['val_file'])
+
+    X_train = train_df[feature_cols].fillna(0)
+    y_train = train_df[TARGET_COL]
+    X_val = val_df[feature_cols].fillna(0)
+    y_val = val_df[TARGET_COL]
+
+    try:
+        from models.supervised.xgboost_model import XGBoostRegressionModel
+
+        model = XGBoostRegressionModel(
+            hyperparameters={
+                'n_estimators': 200,
+                'max_depth': 6,
+                'learning_rate': 0.05,
+                'subsample': 0.8,
+                'colsample_bytree': 0.8,
+                'reg_alpha': 0.1,
+                'reg_lambda': 1.0,
+            },
+            early_stopping_rounds=20,
+        )
+
+        start_time = t.time()
+        model.train(X_train, y_train, X_val, y_val)
+        training_time = t.time() - start_time
+
+        metrics = model.evaluate(X_val, y_val, prefix='val')
+
+        # Save model
+        model_path = Path(MODEL_SAVE_PATH) / 'xgboost'
+        model_path.mkdir(parents=True, exist_ok=True)
+        import joblib
+        joblib.dump(model, model_path / 'model.joblib')
+
+        # Log to MLflow
+        try:
+            with mlflow.start_run(run_name='xgboost_regressor'):
+                mlflow.log_params(model.hyperparameters)
+                mlflow.log_metrics(metrics)
+                mlflow.log_metric('training_time', training_time)
+                mlflow.sklearn.log_model(model.model, 'model')
+        except Exception as e:
+            logger.warning(f"MLflow logging failed: {e}")
+
+        logger.info(f"XGBoost trained: {metrics}")
+        return {
+            'model_type': 'xgboost_regressor',
+            'metrics': metrics,
+            'training_time': training_time,
+            'model_path': str(model_path / 'model.joblib'),
         }
-    }
-    
-    print(f"XGBoost model trained: {model_info}")
-    return model_info
+
+    except ImportError as e:
+        logger.error(f"XGBoost import error: {e}")
+        return {'model_type': 'xgboost_regressor', 'status': 'error', 'error': str(e)}
 
 
 def train_random_forest(**context):
-    """Train Random Forest model"""
-    print("Training Random Forest...")
-    
-    model_info = {
-        'model_type': 'random_forest',
-        'hyperparameters': {
-            'n_estimators': 200,
-            'max_depth': 10
-        },
-        'training_time': 38.5,
-        'metrics': {
-            'train_rmse': 0.06,
-            'val_rmse': 0.09
-        }
+    """Train Random Forest model with MLflow tracking."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-supervised')
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    val_df = pd.read_parquet(split_info['val_file'])
+
+    X_train = train_df[feature_cols].fillna(0)
+    y_train = train_df[TARGET_COL]
+    X_val = val_df[feature_cols].fillna(0)
+    y_val = val_df[TARGET_COL]
+
+    hyperparams = {'n_estimators': 200, 'max_depth': 10, 'min_samples_split': 5, 'random_state': 42, 'n_jobs': -1}
+    model = RandomForestRegressor(**hyperparams)
+
+    start_time = t.time()
+    model.fit(X_train, y_train)
+    training_time = t.time() - start_time
+
+    preds = model.predict(X_val)
+    metrics = {
+        'val_rmse': float(np.sqrt(mean_squared_error(y_val, preds))),
+        'val_mae': float(mean_absolute_error(y_val, preds)),
+        'val_r2': float(r2_score(y_val, preds)),
     }
-    
-    print(f"Random Forest model trained: {model_info}")
-    return model_info
+
+    # Save model
+    model_path = Path(MODEL_SAVE_PATH) / 'random_forest'
+    model_path.mkdir(parents=True, exist_ok=True)
+    import joblib
+    joblib.dump(model, model_path / 'model.joblib')
+
+    try:
+        with mlflow.start_run(run_name='random_forest'):
+            mlflow.log_params(hyperparams)
+            mlflow.log_metrics(metrics)
+            mlflow.log_metric('training_time', training_time)
+            mlflow.sklearn.log_model(model, 'model')
+    except Exception as e:
+        logger.warning(f"MLflow logging failed: {e}")
+
+    logger.info(f"Random Forest trained: {metrics}")
+    return {
+        'model_type': 'random_forest',
+        'metrics': metrics,
+        'training_time': training_time,
+        'model_path': str(model_path / 'model.joblib'),
+    }
 
 
 def train_lightgbm(**context):
-    """Train LightGBM model"""
-    print("Training LightGBM...")
-    
-    model_info = {
-        'model_type': 'lightgbm',
-        'hyperparameters': {
-            'n_estimators': 150,
-            'num_leaves': 31
-        },
-        'training_time': 32.1,
-        'metrics': {
-            'train_rmse': 0.05,
-            'val_rmse': 0.07
+    """Train LightGBM model with MLflow tracking."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-supervised')
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    val_df = pd.read_parquet(split_info['val_file'])
+
+    X_train = train_df[feature_cols].fillna(0)
+    y_train = train_df[TARGET_COL]
+    X_val = val_df[feature_cols].fillna(0)
+    y_val = val_df[TARGET_COL]
+
+    try:
+        from lightgbm import LGBMRegressor
+
+        hyperparams = {'n_estimators': 200, 'num_leaves': 31, 'max_depth': 8, 'learning_rate': 0.05, 'random_state': 42, 'n_jobs': -1, 'verbose': -1}
+        model = LGBMRegressor(**hyperparams)
+
+        start_time = t.time()
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_val, y_val)],
+            callbacks=[],  # LightGBM handles early stopping via callbacks
+        )
+        training_time = t.time() - start_time
+
+        preds = model.predict(X_val)
+        metrics = {
+            'val_rmse': float(np.sqrt(mean_squared_error(y_val, preds))),
+            'val_mae': float(mean_absolute_error(y_val, preds)),
+            'val_r2': float(r2_score(y_val, preds)),
         }
-    }
-    
-    print(f"LightGBM model trained: {model_info}")
-    return model_info
+
+        model_path = Path(MODEL_SAVE_PATH) / 'lightgbm'
+        model_path.mkdir(parents=True, exist_ok=True)
+        import joblib
+        joblib.dump(model, model_path / 'model.joblib')
+
+        try:
+            with mlflow.start_run(run_name='lightgbm'):
+                mlflow.log_params(hyperparams)
+                mlflow.log_metrics(metrics)
+                mlflow.log_metric('training_time', training_time)
+                mlflow.sklearn.log_model(model, 'model')
+        except Exception as e:
+            logger.warning(f"MLflow logging failed: {e}")
+
+        logger.info(f"LightGBM trained: {metrics}")
+        return {
+            'model_type': 'lightgbm',
+            'metrics': metrics,
+            'training_time': training_time,
+            'model_path': str(model_path / 'model.joblib'),
+        }
+
+    except ImportError:
+        logger.warning("LightGBM not installed, skipping")
+        return {'model_type': 'lightgbm', 'status': 'skipped', 'reason': 'not_installed'}
 
 
 def train_lstm(**context):
-    """Train LSTM neural network"""
-    print("Training LSTM model...")
-    
-    model_info = {
+    """Train LSTM neural network (placeholder - requires TensorFlow)."""
+    logger.info("LSTM training requires TensorFlow/Keras - skipping on Cloud Run")
+    return {
         'model_type': 'lstm',
-        'architecture': {
-            'layers': 3,
-            'units': [128, 64, 32],
-            'dropout': 0.2
-        },
-        'training_time': 125.7,
-        'metrics': {
-            'train_rmse': 0.04,
-            'val_rmse': 0.08
-        }
+        'status': 'skipped',
+        'reason': 'tensorflow_not_configured',
     }
-    
-    print(f"LSTM model trained: {model_info}")
-    return model_info
 
 
-# Unsupervised Learning Models
 def train_isolation_forest(**context):
-    """Train Isolation Forest for anomaly detection"""
-    print("Training Isolation Forest...")
-    
-    model_info = {
-        'model_type': 'isolation_forest',
-        'hyperparameters': {
-            'n_estimators': 100,
-            'contamination': 0.1
-        },
-        'training_time': 15.3,
-        'metrics': {
-            'anomalies_detected': 127
-        }
+    """Train Isolation Forest for anomaly detection."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from sklearn.ensemble import IsolationForest
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-unsupervised')
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    X_train = train_df[feature_cols].fillna(0)
+
+    hyperparams = {'n_estimators': 100, 'contamination': 0.1, 'random_state': 42, 'n_jobs': -1}
+    model = IsolationForest(**hyperparams)
+
+    start_time = t.time()
+    predictions = model.fit_predict(X_train)
+    training_time = t.time() - start_time
+
+    anomalies = (predictions == -1).sum()
+    metrics = {
+        'anomalies_detected': int(anomalies),
+        'anomaly_ratio': float(anomalies / len(X_train)),
     }
-    
-    print(f"Isolation Forest trained: {model_info}")
-    return model_info
+
+    model_path = Path(MODEL_SAVE_PATH) / 'isolation_forest'
+    model_path.mkdir(parents=True, exist_ok=True)
+    import joblib
+    joblib.dump(model, model_path / 'model.joblib')
+
+    try:
+        with mlflow.start_run(run_name='isolation_forest'):
+            mlflow.log_params(hyperparams)
+            mlflow.log_metrics(metrics)
+            mlflow.log_metric('training_time', training_time)
+            mlflow.sklearn.log_model(model, 'model')
+    except Exception as e:
+        logger.warning(f"MLflow logging failed: {e}")
+
+    logger.info(f"Isolation Forest: {anomalies} anomalies in {len(X_train)} samples")
+    return {
+        'model_type': 'isolation_forest',
+        'metrics': metrics,
+        'training_time': training_time,
+        'model_path': str(model_path / 'model.joblib'),
+    }
 
 
 def train_kmeans(**context):
-    """Train K-Means clustering"""
-    print("Training K-Means clustering...")
-    
-    model_info = {
-        'model_type': 'kmeans',
-        'hyperparameters': {
-            'n_clusters': 5,
-            'max_iter': 300
-        },
-        'training_time': 8.2,
-        'metrics': {
-            'silhouette_score': 0.45,
-            'inertia': 1523.4
-        }
+    """Train K-Means clustering."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+    from sklearn.preprocessing import StandardScaler
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-unsupervised')
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    X_train = train_df[feature_cols].fillna(0)
+
+    # Standardize for clustering
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_train)
+
+    hyperparams = {'n_clusters': 5, 'max_iter': 300, 'random_state': 42, 'n_init': 10}
+    model = KMeans(**hyperparams)
+
+    start_time = t.time()
+    labels = model.fit_predict(X_scaled)
+    training_time = t.time() - start_time
+
+    sil_score = silhouette_score(X_scaled, labels, sample_size=min(5000, len(X_scaled)))
+    metrics = {
+        'silhouette_score': float(sil_score),
+        'inertia': float(model.inertia_),
     }
-    
-    print(f"K-Means model trained: {model_info}")
-    return model_info
+
+    model_path = Path(MODEL_SAVE_PATH) / 'kmeans'
+    model_path.mkdir(parents=True, exist_ok=True)
+    import joblib
+    joblib.dump({'model': model, 'scaler': scaler}, model_path / 'model.joblib')
+
+    try:
+        with mlflow.start_run(run_name='kmeans_clustering'):
+            mlflow.log_params(hyperparams)
+            mlflow.log_metrics(metrics)
+            mlflow.log_metric('training_time', training_time)
+    except Exception as e:
+        logger.warning(f"MLflow logging failed: {e}")
+
+    logger.info(f"K-Means: silhouette={sil_score:.3f}, inertia={model.inertia_:.1f}")
+    return {
+        'model_type': 'kmeans',
+        'metrics': metrics,
+        'training_time': training_time,
+        'model_path': str(model_path / 'model.joblib'),
+    }
 
 
 def train_autoencoder(**context):
-    """Train Autoencoder for anomaly detection"""
-    print("Training Autoencoder...")
-    
-    model_info = {
+    """Train Autoencoder for anomaly detection (placeholder)."""
+    logger.info("Autoencoder training requires TensorFlow - skipping on Cloud Run")
+    return {
         'model_type': 'autoencoder',
-        'architecture': {
-            'encoder': [50, 30, 10],
-            'decoder': [10, 30, 50]
-        },
-        'training_time': 95.4,
-        'metrics': {
-            'reconstruction_error': 0.023
-        }
+        'status': 'skipped',
+        'reason': 'tensorflow_not_configured',
     }
-    
-    print(f"Autoencoder trained: {model_info}")
-    return model_info
 
 
 def create_ensemble(**context):
-    """Create ensemble model from trained models"""
-    print("Creating ensemble model...")
-    
+    """Create stacking ensemble from trained supervised models."""
+    import pandas as pd
+    import numpy as np
+    import mlflow
+    import time as t
+    from pathlib import Path
+
+    _setup_mlflow('market-intelligence-ensemble')
+
     ti = context['task_instance']
-    
-    # Collect results from supervised models
-    models = []
-    for task in ['train_xgboost', 'train_random_forest', 'train_lightgbm']:
-        try:
-            result = ti.xcom_pull(task_ids=f'supervised_models.{task}')
-            if result:
-                models.append(result)
-        except:
-            pass
-    
-    ensemble_info = {
-        'model_type': 'ensemble',
-        'base_models': len(models),
-        'weights': [0.4, 0.3, 0.3],
-        'metrics': {
-            'val_rmse': 0.065
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    train_df = pd.read_parquet(split_info['train_file'])
+    val_df = pd.read_parquet(split_info['val_file'])
+
+    X_train = train_df[feature_cols].fillna(0)
+    y_train = train_df[TARGET_COL]
+    X_val = val_df[feature_cols].fillna(0)
+    y_val = val_df[TARGET_COL]
+
+    try:
+        from models.ensemble.stacking import StackingEnsemble
+        from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+
+        ensemble = StackingEnsemble(
+            use_xgboost=True,
+            use_lightgbm=True,
+            use_random_forest=True,
+            use_ridge=True,
+            cv=5,
+        )
+
+        start_time = t.time()
+        ensemble.fit(X_train, y_train)
+        training_time = t.time() - start_time
+
+        preds = ensemble.predict(X_val)
+        metrics = {
+            'val_rmse': float(np.sqrt(mean_squared_error(y_val, preds))),
+            'val_mae': float(mean_absolute_error(y_val, preds)),
+            'val_r2': float(r2_score(y_val, preds)),
         }
-    }
-    
-    print(f"Ensemble model created: {ensemble_info}")
-    return ensemble_info
+
+        model_path = Path(MODEL_SAVE_PATH) / 'ensemble'
+        model_path.mkdir(parents=True, exist_ok=True)
+        import joblib
+        joblib.dump(ensemble, model_path / 'model.joblib')
+
+        try:
+            with mlflow.start_run(run_name='stacking_ensemble'):
+                mlflow.log_metrics(metrics)
+                mlflow.log_metric('training_time', training_time)
+                mlflow.log_param('n_base_models', len(ensemble.estimators_ if hasattr(ensemble, 'estimators_') else []))
+        except Exception as e:
+            logger.warning(f"MLflow logging failed: {e}")
+
+        logger.info(f"Ensemble trained: {metrics}")
+        return {
+            'model_type': 'stacking_ensemble',
+            'metrics': metrics,
+            'training_time': training_time,
+            'model_path': str(model_path / 'model.joblib'),
+        }
+
+    except Exception as e:
+        logger.error(f"Ensemble training error: {e}")
+        return {'model_type': 'stacking_ensemble', 'status': 'error', 'error': str(e)}
 
 
 def evaluate_all_models(**context):
-    """Evaluate all trained models"""
-    print("Evaluating all models...")
-    
+    """Evaluate all trained models on test set."""
+    import pandas as pd
+    import numpy as np
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    from pathlib import Path
+
     ti = context['task_instance']
-    
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+
+    test_df = pd.read_parquet(split_info['test_file'])
+    X_test = test_df[feature_cols].fillna(0)
+    y_test = test_df[TARGET_COL]
+
     # Collect all model results
-    all_models = []
-    
-    # Get supervised models
-    supervised_tasks = [
-        'supervised_models.train_xgboost',
-        'supervised_models.train_random_forest',
-        'supervised_models.train_lightgbm',
-        'supervised_models.train_lstm'
-    ]
-    
-    # Get unsupervised models
-    unsupervised_tasks = [
-        'unsupervised_models.train_isolation_forest',
-        'unsupervised_models.train_kmeans',
-        'unsupervised_models.train_autoencoder'
-    ]
-    
-    for task in supervised_tasks + unsupervised_tasks:
-        try:
-            result = ti.xcom_pull(task_ids=task)
-            if result:
-                all_models.append(result)
-        except:
-            pass
-    
-    # Get ensemble
-    ensemble = ti.xcom_pull(task_ids='create_ensemble')
-    if ensemble:
-        all_models.append(ensemble)
-    
-    print(f"Evaluated {len(all_models)} models")
-    
-    evaluation_results = {
-        'total_models': len(all_models),
-        'best_model': 'ensemble',
-        'best_val_rmse': 0.065
+    model_tasks = {
+        'xgboost': 'supervised_models.train_xgboost',
+        'random_forest': 'supervised_models.train_random_forest',
+        'lightgbm': 'supervised_models.train_lightgbm',
+        'lstm': 'supervised_models.train_lstm',
+        'isolation_forest': 'unsupervised_models.train_isolation_forest',
+        'kmeans': 'unsupervised_models.train_kmeans',
+        'autoencoder': 'unsupervised_models.train_autoencoder',
+        'ensemble': 'create_ensemble',
     }
-    
-    return evaluation_results
+
+    all_results = {}
+    best_model = None
+    best_rmse = float('inf')
+
+    for name, task_id in model_tasks.items():
+        result = ti.xcom_pull(task_ids=task_id)
+        if not result or result.get('status') in ['skipped', 'error']:
+            continue
+
+        model_path = result.get('model_path')
+        if model_path and Path(model_path).exists() and result.get('metrics'):
+            all_results[name] = {
+                'val_metrics': result['metrics'],
+                'training_time': result.get('training_time', 0),
+                'model_path': model_path,
+            }
+
+            # Evaluate on test set for supervised models
+            if 'val_rmse' in result['metrics']:
+                try:
+                    import joblib
+                    loaded = joblib.load(model_path)
+                    model = loaded.model if hasattr(loaded, 'model') else loaded
+                    if hasattr(model, 'predict'):
+                        test_preds = model.predict(X_test)
+                        test_metrics = {
+                            'test_rmse': float(np.sqrt(mean_squared_error(y_test, test_preds))),
+                            'test_mae': float(mean_absolute_error(y_test, test_preds)),
+                            'test_r2': float(r2_score(y_test, test_preds)),
+                        }
+                        all_results[name]['test_metrics'] = test_metrics
+
+                        if test_metrics['test_rmse'] < best_rmse:
+                            best_rmse = test_metrics['test_rmse']
+                            best_model = name
+                except Exception as e:
+                    logger.warning(f"Error evaluating {name} on test set: {e}")
+
+    logger.info(f"Evaluated {len(all_results)} models. Best: {best_model} (RMSE: {best_rmse:.6f})")
+    return {
+        'total_models': len(all_results),
+        'best_model': best_model,
+        'best_rmse': best_rmse,
+        'all_results': all_results,
+    }
 
 
 def select_champion_model(**context):
-    """Select champion model based on evaluation metrics"""
-    print("Selecting champion model...")
-    
+    """Select champion model based on evaluation metrics."""
     ti = context['task_instance']
     evaluation = ti.xcom_pull(task_ids='evaluate_models')
-    
-    champion_model = {
-        'model_name': evaluation.get('best_model', 'ensemble'),
+
+    if not evaluation or not evaluation.get('best_model'):
+        logger.warning("No models to select from")
+        return {'model_name': 'none', 'reason': 'no_models_evaluated'}
+
+    best_name = evaluation['best_model']
+    best_info = evaluation['all_results'].get(best_name, {})
+
+    champion = {
+        'model_name': best_name,
         'selected_at': str(datetime.now()),
-        'val_rmse': evaluation.get('best_val_rmse', 0.065),
-        'reason': 'Best validation performance'
+        'val_metrics': best_info.get('val_metrics', {}),
+        'test_metrics': best_info.get('test_metrics', {}),
+        'model_path': best_info.get('model_path', ''),
+        'reason': 'Lowest test RMSE',
     }
-    
-    print(f"Champion model selected: {champion_model}")
-    return champion_model
+
+    logger.info(f"Champion model: {best_name}")
+    return champion
 
 
 def calculate_feature_importance(**context):
-    """Calculate and visualize feature importance"""
-    print("Calculating feature importance...")
-    
-    # TODO: Implement actual feature importance calculation
-    # - Tree-based models: native feature importance
-    # - SHAP values for all models
-    # - Permutation importance
-    
-    top_features = [
-        {'feature': 'RSI', 'importance': 0.15},
-        {'feature': 'MACD', 'importance': 0.12},
-        {'feature': 'volume_ma', 'importance': 0.10},
-        {'feature': 'price_momentum', 'importance': 0.09},
-        {'feature': 'volatility', 'importance': 0.08}
-    ]
-    
-    print(f"Top features: {top_features}")
-    return {'top_features': top_features}
+    """Calculate feature importance from tree-based models."""
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+
+    ti = context['task_instance']
+    split_info = ti.xcom_pull(task_ids='prepare_split')
+    feature_cols = split_info['feature_columns']
+    champion = ti.xcom_pull(task_ids='select_champion')
+
+    if not champion or not champion.get('model_path'):
+        return {'status': 'skipped'}
+
+    try:
+        import joblib
+        loaded = joblib.load(champion['model_path'])
+        model = loaded.model if hasattr(loaded, 'model') else loaded
+
+        if hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+            importance_df = pd.DataFrame({
+                'feature': feature_cols[:len(importances)],
+                'importance': importances,
+            }).sort_values('importance', ascending=False)
+
+            top_features = importance_df.head(20).to_dict('records')
+
+            # Save importance report
+            output_path = Path(MODEL_SAVE_PATH) / 'reports'
+            output_path.mkdir(parents=True, exist_ok=True)
+            importance_df.to_csv(output_path / 'feature_importance.csv', index=False)
+
+            logger.info(f"Top 5 features: {importance_df.head().to_dict('records')}")
+            return {'top_features': top_features, 'status': 'success'}
+
+    except Exception as e:
+        logger.warning(f"Feature importance error: {e}")
+
+    return {'status': 'skipped', 'reason': 'no_feature_importances'}
 
 
 def register_models_mlflow(**context):
-    """Register models in MLflow Model Registry"""
-    print("Registering models in MLflow...")
-    
+    """Register champion model in MLflow Model Registry."""
+    import mlflow
+
     ti = context['task_instance']
     champion = ti.xcom_pull(task_ids='select_champion')
-    
-    # TODO: Implement actual MLflow registration
-    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
-    
-    registration_info = {
-        'mlflow_uri': mlflow_uri,
-        'model_name': champion.get('model_name'),
-        'version': 1,
-        'stage': 'Staging',
-        'registered_at': str(datetime.now())
+
+    if not champion or champion.get('model_name') == 'none':
+        return {'status': 'skipped', 'reason': 'no_champion'}
+
+    _setup_mlflow('market-intelligence')
+
+    try:
+        # Log final champion run
+        with mlflow.start_run(run_name=f"champion_{champion['model_name']}"):
+            mlflow.log_param('model_type', champion['model_name'])
+            mlflow.log_param('selected_at', champion['selected_at'])
+
+            if champion.get('val_metrics'):
+                for k, v in champion['val_metrics'].items():
+                    mlflow.log_metric(f'champion_{k}', v)
+
+            if champion.get('test_metrics'):
+                for k, v in champion['test_metrics'].items():
+                    mlflow.log_metric(f'champion_{k}', v)
+
+            # Try to register the model
+            if champion.get('model_path'):
+                import joblib
+                loaded = joblib.load(champion['model_path'])
+                model = loaded.model if hasattr(loaded, 'model') else loaded
+                result = mlflow.sklearn.log_model(
+                    model, 'model',
+                    registered_model_name='market-predictor',
+                )
+                logger.info(f"Model registered as 'market-predictor'")
+                return {
+                    'status': 'registered',
+                    'model_name': 'market-predictor',
+                    'model_uri': result.model_uri,
+                }
+
+    except Exception as e:
+        logger.warning(f"MLflow registration failed: {e}")
+
+    return {
+        'status': 'logged',
+        'model_name': champion['model_name'],
+        'mlflow_uri': MLFLOW_TRACKING_URI,
     }
-    
-    print(f"Models registered: {registration_info}")
-    return registration_info
 
 
 def generate_model_card(**context):
-    """Generate model card documentation"""
-    print("Generating model card...")
-    
+    """Generate model card documentation."""
+    from pathlib import Path
+
     ti = context['task_instance']
     champion = ti.xcom_pull(task_ids='select_champion')
     evaluation = ti.xcom_pull(task_ids='evaluate_models')
     features = ti.xcom_pull(task_ids='feature_importance')
-    
+
     model_card = {
-        'model_name': champion.get('model_name'),
+        'model_name': champion.get('model_name', 'unknown'),
         'version': '1.0',
         'created_at': str(datetime.now()),
-        'metrics': evaluation,
-        'top_features': features.get('top_features'),
-        'intended_use': 'Financial market prediction',
-        'limitations': 'Past performance does not guarantee future results'
+        'val_metrics': champion.get('val_metrics', {}),
+        'test_metrics': champion.get('test_metrics', {}),
+        'top_features': features.get('top_features', [])[:10] if features else [],
+        'total_models_evaluated': evaluation.get('total_models', 0),
+        'intended_use': 'Financial market prediction - research/educational use only',
+        'limitations': [
+            'Past performance does not guarantee future results',
+            'Trained on synthetic/limited historical data',
+            'Not suitable for production trading without additional validation',
+        ],
     }
-    
-    print(f"Model card generated: {model_card}")
+
+    # Save model card
+    output_path = Path(MODEL_SAVE_PATH) / 'reports'
+    output_path.mkdir(parents=True, exist_ok=True)
+    card_file = output_path / 'model_card.json'
+    with open(card_file, 'w') as f:
+        json.dump(model_card, f, indent=2, default=str)
+
+    logger.info(f"Model card saved to {card_file}")
     return model_card
 
 
@@ -400,8 +831,7 @@ with DAG(
     max_active_runs=1,
     tags=['model-training', 'ml-pipeline', 'mlops'],
 ) as dag:
-    
-    # Wait for feature engineering to complete
+
     wait_for_features = ExternalTaskSensor(
         task_id='wait_for_features',
         external_dag_id='feature_engineering_pipeline',
@@ -412,164 +842,102 @@ with DAG(
         poke_interval=60,
         timeout=3600,
     )
-    
-    # Load features
+
     load_features_task = PythonOperator(
         task_id='load_features',
         python_callable=load_features,
         provide_context=True,
     )
-    
-    # Prepare data split
+
     prepare_split = PythonOperator(
         task_id='prepare_split',
         python_callable=prepare_train_test_split,
         provide_context=True,
     )
-    
-    # Supervised Learning Models (Task Group)
+
     with TaskGroup('supervised_models', tooltip='Train supervised learning models') as supervised_models:
-        
         xgboost = PythonOperator(
             task_id='train_xgboost',
             python_callable=train_xgboost_regressor,
             provide_context=True,
         )
-        
         rf = PythonOperator(
             task_id='train_random_forest',
             python_callable=train_random_forest,
             provide_context=True,
         )
-        
         lgbm = PythonOperator(
             task_id='train_lightgbm',
             python_callable=train_lightgbm,
             provide_context=True,
         )
-        
         lstm = PythonOperator(
             task_id='train_lstm',
             python_callable=train_lstm,
             provide_context=True,
         )
-        
         [xgboost, rf, lgbm, lstm]
-    
-    # Unsupervised Learning Models (Task Group)
+
     with TaskGroup('unsupervised_models', tooltip='Train unsupervised learning models') as unsupervised_models:
-        
         isolation = PythonOperator(
             task_id='train_isolation_forest',
             python_callable=train_isolation_forest,
             provide_context=True,
         )
-        
         kmeans = PythonOperator(
             task_id='train_kmeans',
             python_callable=train_kmeans,
             provide_context=True,
         )
-        
         autoencoder = PythonOperator(
             task_id='train_autoencoder',
             python_callable=train_autoencoder,
             provide_context=True,
         )
-        
         [isolation, kmeans, autoencoder]
-    
-    # Create ensemble
+
     ensemble = PythonOperator(
         task_id='create_ensemble',
         python_callable=create_ensemble,
         provide_context=True,
     )
-    
-    # Evaluate models
+
     evaluate = PythonOperator(
         task_id='evaluate_models',
         python_callable=evaluate_all_models,
         provide_context=True,
         trigger_rule='none_failed',
     )
-    
-    # Select champion model
+
     champion = PythonOperator(
         task_id='select_champion',
         python_callable=select_champion_model,
         provide_context=True,
     )
-    
-    # Feature importance
+
     importance = PythonOperator(
         task_id='feature_importance',
         python_callable=calculate_feature_importance,
         provide_context=True,
     )
-    
-    # Register in MLflow
+
     register = PythonOperator(
         task_id='register_mlflow',
         python_callable=register_models_mlflow,
         provide_context=True,
     )
-    
-    # Generate model card
+
     model_card = PythonOperator(
         task_id='generate_model_card',
         python_callable=generate_model_card,
         provide_context=True,
     )
-    
-    # End task
-    end = EmptyOperator(
-        task_id='end',
-        dag=dag,
-    )
-    
-    # Define task dependencies
+
+    end = EmptyOperator(task_id='end')
+
     wait_for_features >> load_features_task >> prepare_split
     prepare_split >> [supervised_models, unsupervised_models]
     supervised_models >> ensemble
     [ensemble, unsupervised_models] >> evaluate
     evaluate >> champion >> [importance, register, model_card]
     [importance, register, model_card] >> end
-
-
-"""
-DAG Structure:
-
-wait_for_features (Sensor)
-        |
-   load_features
-        |
-   prepare_split
-        |
-        |-- supervised_models (Task Group)
-        |       |-- train_xgboost
-        |       |-- train_random_forest
-        |       |-- train_lightgbm
-        |       |-- train_lstm
-        |
-        |-- unsupervised_models (Task Group)
-                |-- train_isolation_forest
-                |-- train_kmeans
-                |-- train_autoencoder
-        |
-   create_ensemble (from supervised)
-        |
-   evaluate_models
-        |
-   select_champion
-        |
-        |-- feature_importance
-        |-- register_mlflow
-        |-- generate_model_card
-        |
-      end
-
-Schedule: Weekly on Sunday at 6 AM UTC
-Dependencies: Waits for feature_engineering_pipeline to complete
-Timeout: 2 hours
-"""

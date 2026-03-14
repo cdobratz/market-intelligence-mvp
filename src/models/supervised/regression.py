@@ -172,10 +172,10 @@ class BaseRegressionModel(ABC):
 
         # Calculate directional accuracy
         if len(y) > 1:
-            actual_direction = np.sign(y.diff())
-            pred_direction = np.sign(pd.Series(predictions).diff())
+            actual_direction = np.sign(np.diff(y.values))
+            pred_direction = np.sign(np.diff(predictions))
             directional_accuracy = (
-                (actual_direction == pred_direction).sum() / (len(y) - 1) * 100
+                (actual_direction == pred_direction).sum() / len(actual_direction) * 100
             )
         else:
             directional_accuracy = 0.0

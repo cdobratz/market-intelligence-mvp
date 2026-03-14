@@ -242,29 +242,35 @@ def cached_feature_engineering(
     return cache.get_or_compute(df, feature_func, **kwargs)
 
 
-# Re-export commonly used functions for convenience
-# noqa: E402 - Intentional lazy imports after class definitions to avoid circular dependencies
-from src.features.sentiment import (  # noqa: E402
-    NewsProcessor,
-    SentimentAnalyzer,
-    extract_sentiment_features,
-)
-from src.features.technical_indicators import (  # noqa: E402
-    calculate_all_indicators_vectorized,
-    calculate_atr,
-    calculate_bollinger_bands,
-    calculate_ema,
-    calculate_macd,
-    calculate_rsi,
-    calculate_sma,
-)
-from src.features.timeseries import engineer_features  # noqa: E402
+# Lazy imports to avoid loading heavy dependencies (transformers/FinBERT) at import time.
+# Import these explicitly when needed:
+#   from src.features.sentiment import SentimentAnalyzer, extract_sentiment_features
+#   from src.features.technical_indicators import calculate_rsi, calculate_macd, ...
+#   from src.features.timeseries import engineer_features
 
-# Conditionally export TransformerSentimentAnalyzer
-try:
-    from src.features.sentiment import TransformerSentimentAnalyzer  # noqa: F401
-except ImportError:
-    TransformerSentimentAnalyzer = None  # type: ignore
+
+def __getattr__(name):
+    """Lazy import for commonly used functions."""
+    _sentiment_names = {
+        "NewsProcessor", "SentimentAnalyzer", "extract_sentiment_features",
+        "TransformerSentimentAnalyzer",
+    }
+    _indicator_names = {
+        "calculate_all_indicators_vectorized", "calculate_atr",
+        "calculate_bollinger_bands", "calculate_ema", "calculate_macd",
+        "calculate_rsi", "calculate_sma",
+    }
+
+    if name in _sentiment_names:
+        from src.features import sentiment
+        return getattr(sentiment, name, None)
+    elif name in _indicator_names:
+        from src.features import technical_indicators
+        return getattr(technical_indicators, name)
+    elif name == "engineer_features":
+        from src.features.timeseries import engineer_features
+        return engineer_features
+    raise AttributeError(f"module 'src.features' has no attribute {name!r}")
 
 __all__ = [
     # Caching

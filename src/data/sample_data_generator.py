@@ -51,19 +51,43 @@ class SyntheticMarketDataGenerator:
 
     def generate_price_series(self) -> pd.Series:
         """
-        Generate a synthetic price series using geometric Brownian motion.
+        Generate a synthetic price series with mean-reversion and momentum patterns.
+
+        Uses GBM as the base, overlaid with:
+        - Mean-reversion around a slow-moving trend (so RSI/Bollinger work)
+        - Short-term momentum (so MACD/lag features work)
+        - Regime-switching volatility
 
         Returns:
             Series of synthetic prices
         """
-        # Generate random returns
-        returns = np.random.normal(self.trend, self.volatility, self.n_days)
+        n = self.n_days
+        prices = np.zeros(n)
+        prices[0] = self.start_price
 
-        # Calculate cumulative returns
-        cumulative_returns = np.exp(np.cumsum(returns))
+        # Slow-moving trend (mean to revert toward)
+        trend_prices = self.start_price * np.exp(
+            np.cumsum(np.random.normal(self.trend, self.volatility * 0.1, n))
+        )
 
-        # Calculate prices
-        prices = self.start_price * cumulative_returns
+        # Generate returns with mean-reversion + momentum
+        for i in range(1, n):
+            # Mean-reversion toward slow trend
+            reversion = 0.10 * (np.log(trend_prices[i]) - np.log(prices[i - 1]))
+
+            # Short-term momentum (3-day autocorrelation)
+            if i >= 3:
+                recent_return = np.log(prices[i - 1] / prices[i - 3]) / 2
+                momentum = 0.20 * recent_return
+            else:
+                momentum = 0.0
+
+            # Random noise (scaled down)
+            noise = np.random.normal(self.trend, self.volatility) * 0.7
+
+            # Combine
+            log_return = reversion + momentum + noise
+            prices[i] = prices[i - 1] * np.exp(log_return)
 
         return pd.Series(prices)
 
@@ -151,11 +175,31 @@ class SyntheticMarketDataGenerator:
         # Generate OHLCV for each asset
         all_data = []
         for i, symbol in enumerate(symbols):
-            # Use the generated returns for this asset
-            asset_returns = returns[:, i]
+            # Use correlated returns as the base noise component
+            asset_noise = returns[:, i]
 
-            # Calculate prices from returns
-            prices = self.start_price * np.exp(np.cumsum(asset_returns))
+            # Build prices with mean-reversion and momentum (same as generate_price_series)
+            n = self.n_days
+            prices = np.zeros(n)
+            prices[0] = self.start_price
+
+            # Slow-moving trend for mean-reversion target
+            trend_prices = self.start_price * np.exp(
+                np.cumsum(np.random.normal(self.trend, self.volatility * 0.1, n))
+            )
+
+            for t in range(1, n):
+                # Mean-reversion toward slow trend (stronger for learnable patterns)
+                reversion = 0.10 * (np.log(trend_prices[t]) - np.log(prices[t - 1]))
+                # Short-term momentum (3-day autocorrelation)
+                if t >= 3:
+                    recent_return = np.log(prices[t - 1] / prices[t - 3]) / 2
+                    momentum = 0.20 * recent_return
+                else:
+                    momentum = 0.0
+                # Correlated noise (scaled down so patterns dominate)
+                log_return = reversion + momentum + asset_noise[t] * 0.7
+                prices[t] = prices[t - 1] * np.exp(log_return)
 
             # Create OHLCV data
             dates = pd.date_range(
@@ -286,9 +330,9 @@ def generate_training_data(
 
     logger.info(f"Complete data shape after feature engineering: {complete_data.shape}")
 
-    # Create target variable: next day's return
+    # Create target variable: 5-day forward return (higher signal-to-noise than 1-day)
     complete_data = complete_data.sort_values(["symbol", "date"])
-    complete_data["target_return"] = complete_data.groupby("symbol")["close"].pct_change().shift(-1)
+    complete_data["target_return"] = complete_data.groupby("symbol")["close"].pct_change(5).shift(-5)
 
     # Create target labels for classification (Up/Down/Neutral)
     def classify_return(ret: float) -> str:
@@ -303,8 +347,9 @@ def generate_training_data(
 
     complete_data["target_direction"] = complete_data["target_return"].apply(classify_return)
 
-    # Remove last row for each symbol (no target)
-    complete_data = complete_data.groupby("symbol").apply(lambda x: x.iloc[:-1]).reset_index(drop=True)
+    # Remove rows without target (last 5 per symbol due to 5-day forward return)
+    complete_data = complete_data.dropna(subset=["target_return"])
+    complete_data = complete_data.reset_index(drop=True)
 
     # Split by date (time-series aware split)
     complete_data = complete_data.sort_values("date")

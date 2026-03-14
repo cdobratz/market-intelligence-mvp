@@ -2,6 +2,7 @@
 
 import os
 import sys
+import json
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
@@ -49,7 +50,10 @@ class PredictionService:
     def __init__(self):
         self.sentiment_analyzer = None
         self._init_sentiment()
+        self.model = None
         self.model_loaded = False
+        self.feature_columns = None
+        self.production_metadata = None
         self._init_model()
 
     def _init_sentiment(self):
@@ -64,23 +68,42 @@ class PredictionService:
             self.sentiment_analyzer = None
 
     def _init_model(self):
-        """Initialize the ML model."""
-        # Try to load from MLflow or local file
+        """Initialize the ML model from production directory."""
         model_path = os.path.join(
             os.path.dirname(__file__), '..', '..', 'models', 'production'
         )
-        
+
         if os.path.exists(model_path):
             try:
                 import joblib
-                # Load model if exists
-                self.model = None  # Would load actual model here
-                self.model_loaded = True
-                logger.info(f"Model loaded from {model_path}")
+
+                # Load production metadata
+                meta_path = os.path.join(model_path, 'production_metadata.json')
+                if os.path.exists(meta_path):
+                    with open(meta_path) as f:
+                        self.production_metadata = json.load(f)
+                    self.feature_columns = self.production_metadata.get('feature_columns')
+                    logger.info(f"Production model: {self.production_metadata.get('model_name')}")
+
+                # Load the model - try various file patterns
+                for model_file in [
+                    'model.pkl', 'model.joblib',
+                    'xgboost_regressor_model.pkl', 'randomforest_regressor_model.pkl',
+                    'lightgbm_regressor_model.pkl',
+                ]:
+                    full_path = os.path.join(model_path, model_file)
+                    if os.path.exists(full_path):
+                        self.model = joblib.load(full_path)
+                        self.model_loaded = True
+                        logger.info(f"Model loaded from {full_path}")
+                        break
+
+                if not self.model_loaded:
+                    logger.warning(f"No model file found in {model_path}")
             except Exception as e:
                 logger.warning(f"Could not load model: {e}")
         else:
-            logger.info("Running in demo mode - using synthetic predictions")
+            logger.info("No production model found - using demo predictions")
 
     def get_stock_data(self, symbol: str) -> pd.DataFrame:
         """Fetch stock data for a symbol."""
@@ -220,10 +243,13 @@ class PredictionService:
         # Get latest features
         latest = features_df.iloc[-1]
         
-        if self.model_loaded and hasattr(self, 'model') and self.model is not None:
-            # Use actual model prediction
-            # This would require proper feature preparation
-            prediction = 0.0  # Would be model.predict(features)
+        if self.model_loaded and self.model is not None:
+            # Use actual trained model
+            try:
+                prediction = self._model_prediction(features_df)
+            except Exception as e:
+                logger.warning(f"Model prediction failed: {e}, using demo")
+                prediction = self._demo_prediction(features_df)
         else:
             # Demo prediction based on technical signals
             prediction = self._demo_prediction(features_df)
@@ -253,6 +279,28 @@ class PredictionService:
             result["features"] = available_features
         
         return result
+
+    def _model_prediction(self, df: pd.DataFrame) -> float:
+        """Generate prediction using the loaded production model."""
+        latest = df.iloc[[-1]]  # Last row as DataFrame
+
+        if self.feature_columns:
+            # Use exact feature columns from training
+            available = [c for c in self.feature_columns if c in latest.columns]
+            missing = [c for c in self.feature_columns if c not in latest.columns]
+
+            features = pd.DataFrame(0.0, index=latest.index, columns=self.feature_columns)
+            for col in available:
+                features[col] = latest[col].values
+
+            features = features.fillna(0).replace([np.inf, -np.inf], 0)
+        else:
+            # Use all numeric columns
+            numeric_cols = latest.select_dtypes(include=[np.number]).columns.tolist()
+            features = latest[numeric_cols].fillna(0).replace([np.inf, -np.inf], 0)
+
+        pred = self.model.predict(features)
+        return float(pred[0])
 
     def _demo_prediction(self, df: pd.DataFrame) -> float:
         """Generate a demo prediction based on technical indicators."""
@@ -318,23 +366,66 @@ class PredictionService:
 
     def get_models_info(self) -> List[Dict[str, Any]]:
         """Get information about available models."""
-        models = [
+        models_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'models')
+
+        # Try loading training summary for real metrics
+        summary_path = os.path.join(models_dir, 'training_summary.json')
+        if os.path.exists(summary_path):
+            try:
+                with open(summary_path) as f:
+                    summary = json.load(f)
+
+                trained_at = summary.get("timestamp", datetime.now().isoformat())
+                metrics = summary.get("metrics", {})
+
+                models = []
+                model_configs = [
+                    ("XGBoost Regressor", "xgboost"),
+                    ("Random Forest Regressor", "random_forest"),
+                    ("LightGBM Regressor", "lightgbm"),
+                    ("XGBoost Classifier", "xgboost_classifier"),
+                    ("RF Classifier", "rf_classifier"),
+                ]
+
+                for display_name, key in model_configs:
+                    m = metrics.get(key, {})
+                    r2 = m.get("test_r2")
+                    acc = m.get("test_accuracy")
+                    score = acc if acc is not None else (max(0, r2) if r2 is not None else None)
+
+                    top_features = ["rsi", "macd", "sma_20", "close_lag_1", "volume", "momentum"]
+                    models.append({
+                        "name": display_name,
+                        "version": "1.0.0",
+                        "accuracy": round(score, 4) if score is not None else None,
+                        "last_trained": trained_at,
+                        "features": top_features,
+                    })
+
+                # Add production champion info
+                best = summary.get("best_model", "unknown")
+                models.insert(0, {
+                    "name": f"Production ({best})",
+                    "version": "1.0.0",
+                    "accuracy": round(max(0, metrics.get(best, {}).get("test_r2", 0)), 4),
+                    "last_trained": trained_at,
+                    "features": ["rsi", "macd", "sma_20", "close_lag_1", "volume", "momentum"],
+                })
+
+                return models
+            except Exception as e:
+                logger.warning(f"Could not load training summary: {e}")
+
+        # Fallback to defaults
+        return [
             {
                 "name": "XGBoost Regressor",
                 "version": "1.0.0",
                 "accuracy": 0.72,
-                "last_trained": (datetime.now() - timedelta(days=random.randint(1, 7))).isoformat(),
+                "last_trained": datetime.now().isoformat(),
                 "features": ["rsi", "macd", "bb_position", "sma_ratio", "volume_ratio", "sentiment"]
             },
-            {
-                "name": "Stacking Ensemble",
-                "version": "1.0.0",
-                "accuracy": 0.75,
-                "last_trained": (datetime.now() - timedelta(days=random.randint(1, 7))).isoformat(),
-                "features": ["rsi", "macd", "bb_position", "sma_ratio", "volume_ratio", "sentiment", "regime"]
-            }
         ]
-        return models
 
 
 # Singleton instance

@@ -15,13 +15,21 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Try to import transformers for FinBERT support
-try:
-    from transformers import pipeline
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    logger.warning("transformers not installed. FinBERT sentiment analysis unavailable.")
+# Lazy import for transformers to avoid blocking mutex on import
+# The actual import happens in TransformerSentimentAnalyzer.__init__
+TRANSFORMERS_AVAILABLE = None  # Will be set on first use
+
+
+def _check_transformers():
+    global TRANSFORMERS_AVAILABLE
+    if TRANSFORMERS_AVAILABLE is None:
+        try:
+            from transformers import pipeline  # noqa: F401
+            TRANSFORMERS_AVAILABLE = True
+        except ImportError:
+            TRANSFORMERS_AVAILABLE = False
+            logger.warning("transformers not installed. FinBERT sentiment analysis unavailable.")
+    return TRANSFORMERS_AVAILABLE
 
 
 class TransformerSentimentAnalyzer:
@@ -52,7 +60,7 @@ class TransformerSentimentAnalyzer:
             device: Device to run on (-1 for CPU, 0+ for GPU)
             batch_size: Batch size for processing multiple texts
         """
-        if not TRANSFORMERS_AVAILABLE:
+        if not _check_transformers():
             raise ImportError(
                 "transformers library required for TransformerSentimentAnalyzer. "
                 "Install with: pip install transformers torch"
@@ -68,6 +76,7 @@ class TransformerSentimentAnalyzer:
         """Lazy load the classifier to avoid loading model on import."""
         if self._classifier is None:
             logger.info(f"Loading sentiment model: {self.model_name}")
+            from transformers import pipeline
             self._classifier = pipeline(
                 "sentiment-analysis",
                 model=self.model_name,

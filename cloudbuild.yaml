@@ -2,51 +2,36 @@
 # Google Cloud Build Configuration
 # CI/CD pipeline for Market Intelligence Platform
 #
-# Trigger this from GitHub push or manually:
+# Trigger: GitHub push or manual
 #   gcloud builds submit --config cloudbuild.yaml
+#
+# Prerequisites:
+#   - Cloud SQL instance "market-intel-db" with databases: airflow, mlflow
+#   - GCS bucket "$PROJECT_ID-ml-artifacts"
+#   - Run: ./scripts/deploy-gcp.sh setup-db (to create Cloud SQL)
 # =============================================================================
 
 steps:
-  # Build Airflow container
+  # Build all containers in parallel
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-f'
-      - 'docker/Dockerfile.airflow'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/airflow:latest'
-      - '.'
+    args: ['build', '--platform', 'linux/amd64', '-f', 'docker/Dockerfile.airflow',
+           '-t', 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA',
+           '-t', 'gcr.io/$PROJECT_ID/airflow:latest', '.']
     id: 'build-airflow'
 
-  # Build MLflow container
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-f'
-      - 'docker/Dockerfile.mlflow'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/mlflow:latest'
-      - '.'
+    args: ['build', '--platform', 'linux/amd64', '-f', 'docker/Dockerfile.mlflow',
+           '-t', 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA',
+           '-t', 'gcr.io/$PROJECT_ID/mlflow:latest', '.']
     id: 'build-mlflow'
 
-  # Build API container
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-f'
-      - 'docker/Dockerfile.api'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
-      - '-t'
-      - 'gcr.io/$PROJECT_ID/api:latest'
-      - '.'
+    args: ['build', '--platform', 'linux/amd64', '-f', 'docker/Dockerfile.api',
+           '-t', 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA',
+           '-t', 'gcr.io/$PROJECT_ID/api:latest', '.']
     id: 'build-api'
 
-  # Push Airflow container
+  # Push all containers
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA']
     id: 'push-airflow'
@@ -56,7 +41,6 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/airflow:latest']
     waitFor: ['build-airflow']
 
-  # Push MLflow container
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA']
     id: 'push-mlflow'
@@ -66,7 +50,6 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/mlflow:latest']
     waitFor: ['build-mlflow']
 
-  # Push API container
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA']
     id: 'push-api'
@@ -76,62 +59,97 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/api:latest']
     waitFor: ['build-api']
 
-  # Deploy API to Cloud Run (main service for predictions)
+  # Deploy MLflow first (other services need its URL)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - 'market-intel-api'
-      - '--image=gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
-      - '--region=us-central1'
-      - '--platform=managed'
-      - '--memory=2Gi'
-      - '--cpu=2'
-      - '--min-instances=0'
-      - '--max-instances=10'
-      - '--allow-unauthenticated'
-    id: 'deploy-api'
-    waitFor: ['push-api']
-
-  # Deploy MLflow to Cloud Run
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
-    args:
-      - 'run'
-      - 'deploy'
-      - 'market-intel-mlflow'
-      - '--image=gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA'
-      - '--region=us-central1'
-      - '--platform=managed'
-      - '--memory=1Gi'
-      - '--cpu=1'
-      - '--min-instances=0'
-      - '--max-instances=1'
-      - '--allow-unauthenticated'
+      - '-c'
+      - |
+        SQL_CONN="$PROJECT_ID:${_REGION}:market-intel-db"
+        gcloud run deploy market-intel-mlflow \
+          --image=gcr.io/$PROJECT_ID/mlflow:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --memory=1Gi --cpu=1 \
+          --min-instances=0 --max-instances=1 \
+          --set-env-vars="MLFLOW_BACKEND_URI=postgresql+psycopg2://postgres:postgres@/mlflow?host=/cloudsql/$${SQL_CONN},MLFLOW_ARTIFACT_ROOT=gs://$PROJECT_ID-ml-artifacts" \
+          --add-cloudsql-instances="$${SQL_CONN}" \
+          --allow-unauthenticated
     id: 'deploy-mlflow'
     waitFor: ['push-mlflow']
 
-  # Deploy Airflow to Cloud Run
+  # Get MLflow URL for other services
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - 'market-intel-airflow'
-      - '--image=gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
-      - '--region=us-central1'
-      - '--platform=managed'
-      - '--memory=2Gi'
-      - '--cpu=2'
-      - '--timeout=3600'
-      - '--min-instances=0'
-      - '--max-instances=1'
-      - '--allow-unauthenticated'
-    id: 'deploy-airflow'
-    waitFor: ['push-airflow']
+      - '-c'
+      - |
+        gcloud run services describe market-intel-mlflow \
+          --region=${_REGION} --format='value(status.url)' > /workspace/mlflow_url.txt
+    id: 'get-mlflow-url'
+    waitFor: ['deploy-mlflow']
 
-# Store built images in Container Registry
+  # Deploy Airflow webserver
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        SQL_CONN="$PROJECT_ID:${_REGION}:market-intel-db"
+        MLFLOW_URL=$$(cat /workspace/mlflow_url.txt)
+        gcloud run deploy market-intel-airflow \
+          --image=gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --memory=2Gi --cpu=2 \
+          --min-instances=0 --max-instances=1 \
+          --timeout=3600 \
+          --set-env-vars="AIRFLOW_MODE=webserver,AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@/airflow?host=/cloudsql/$${SQL_CONN},AIRFLOW__CORE__EXECUTOR=LocalExecutor,AIRFLOW__CORE__LOAD_EXAMPLES=False,AIRFLOW__WEBSERVER__SECRET_KEY=market-intel-secret-key-change-me,AIRFLOW_WWW_USER_USERNAME=admin,AIRFLOW_WWW_USER_PASSWORD=admin,MLFLOW_TRACKING_URI=$${MLFLOW_URL}" \
+          --add-cloudsql-instances="$${SQL_CONN}" \
+          --allow-unauthenticated
+    id: 'deploy-airflow-web'
+    waitFor: ['push-airflow', 'get-mlflow-url']
+
+  # Deploy Airflow scheduler (always-on, no public access)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        SQL_CONN="$PROJECT_ID:${_REGION}:market-intel-db"
+        MLFLOW_URL=$$(cat /workspace/mlflow_url.txt)
+        gcloud run deploy market-intel-airflow-scheduler \
+          --image=gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --memory=2Gi --cpu=2 \
+          --min-instances=1 --max-instances=1 \
+          --timeout=3600 \
+          --no-cpu-throttling \
+          --set-env-vars="AIRFLOW_MODE=scheduler,AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@/airflow?host=/cloudsql/$${SQL_CONN},AIRFLOW__CORE__EXECUTOR=LocalExecutor,AIRFLOW__CORE__LOAD_EXAMPLES=False,AIRFLOW__WEBSERVER__SECRET_KEY=market-intel-secret-key-change-me,MLFLOW_TRACKING_URI=$${MLFLOW_URL}" \
+          --add-cloudsql-instances="$${SQL_CONN}" \
+          --no-allow-unauthenticated
+    id: 'deploy-airflow-scheduler'
+    waitFor: ['push-airflow', 'get-mlflow-url']
+
+  # Deploy API
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        MLFLOW_URL=$$(cat /workspace/mlflow_url.txt)
+        gcloud run deploy market-intel-api \
+          --image=gcr.io/$PROJECT_ID/api:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --memory=2Gi --cpu=2 \
+          --min-instances=0 --max-instances=10 \
+          --set-env-vars="DEMO_MODE=true,MLFLOW_TRACKING_URI=$${MLFLOW_URL}" \
+          --allow-unauthenticated
+    id: 'deploy-api'
+    waitFor: ['push-api', 'get-mlflow-url']
+
 images:
   - 'gcr.io/$PROJECT_ID/airflow:$COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/airflow:latest'
@@ -140,14 +158,11 @@ images:
   - 'gcr.io/$PROJECT_ID/api:$COMMIT_SHA'
   - 'gcr.io/$PROJECT_ID/api:latest'
 
-# Build configuration
 options:
   logging: CLOUD_LOGGING_ONLY
   machineType: 'E2_HIGHCPU_8'
 
-# Timeout for the entire build
 timeout: '1800s'
 
-# Substitutions (can be overridden)
 substitutions:
-  _REGION: 'us-central1'
+  _REGION: 'us-west1'

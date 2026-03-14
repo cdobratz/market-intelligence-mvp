@@ -16,10 +16,16 @@ RUN pip install --no-cache-dir -r /requirements.txt
 COPY --chown=airflow:root airflow/dags /opt/airflow/dags
 COPY --chown=airflow:root src /opt/airflow/src
 
+# Copy entrypoint script
+COPY --chown=airflow:root docker/entrypoint-airflow.sh /entrypoint-airflow.sh
+
 ENV PYTHONPATH="${PYTHONPATH}:/opt/airflow/src"
+
+# Default mode: webserver (override with AIRFLOW_MODE env var)
+# Modes: webserver, scheduler, combined
+ENV AIRFLOW_MODE=webserver
 
 # Cloud Run expects port 8080
 EXPOSE 8080
 
-# Airflow webserver for Cloud Run
-CMD ["airflow", "webserver", "--port", "8080"]
+ENTRYPOINT ["/entrypoint-airflow.sh"]

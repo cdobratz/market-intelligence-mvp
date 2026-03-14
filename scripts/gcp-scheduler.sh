@@ -15,6 +15,7 @@ REGION="${GCP_REGION:-us-central1}"
 
 # Service names
 AIRFLOW_SERVICE="market-intel-airflow"
+AIRFLOW_SCHEDULER_SERVICE="market-intel-airflow-scheduler"
 MLFLOW_SERVICE="market-intel-mlflow"
 API_SERVICE="market-intel-api"
 
@@ -47,7 +48,7 @@ setup_scheduler() {
     SA_EMAIL="${PROJECT_ID}@appspot.gserviceaccount.com"
 
     # Create start jobs for each service
-    for service in "$AIRFLOW_SERVICE" "$MLFLOW_SERVICE" "$API_SERVICE"; do
+    for service in "$AIRFLOW_SERVICE" "$AIRFLOW_SCHEDULER_SERVICE" "$MLFLOW_SERVICE" "$API_SERVICE"; do
         SERVICE_URL=$(gcloud run services describe "$service" --region="$REGION" --format='value(status.url)')
 
         log_info "Creating start scheduler for $service..."
@@ -84,7 +85,7 @@ setup_scheduler() {
 remove_scheduler() {
     log_info "Removing Cloud Scheduler jobs..."
 
-    for service in "$AIRFLOW_SERVICE" "$MLFLOW_SERVICE" "$API_SERVICE"; do
+    for service in "$AIRFLOW_SERVICE" "$AIRFLOW_SCHEDULER_SERVICE" "$MLFLOW_SERVICE" "$API_SERVICE"; do
         gcloud scheduler jobs delete "start-${service}" --location="$REGION" --quiet 2>/dev/null || true
         gcloud scheduler jobs delete "stop-${service}" --location="$REGION" --quiet 2>/dev/null || true
     done

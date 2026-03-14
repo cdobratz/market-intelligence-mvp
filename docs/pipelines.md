@@ -7,9 +7,16 @@ The data ingestion DAG fetches data from multiple sources daily at 2 AM UTC.
 **Manual Trigger**:
 ```bash
 # Via Airflow UI: Navigate to DAGs > data_ingestion_pipeline > Trigger DAG
+# Local: http://localhost:8080
+# Cloud Run: https://market-intel-airflow-1001565765695.us-west1.run.app
 
-# Via CLI:
+# Via CLI (local):
 docker-compose exec airflow-scheduler airflow dags trigger data_ingestion_pipeline
+
+# Via API (Cloud Run):
+curl -s -u admin:admin -X POST \
+  "https://market-intel-airflow-1001565765695.us-west1.run.app/api/v1/dags/data_ingestion_pipeline/dagRuns" \
+  -H "Content-Type: application/json" -d '{}'
 ```
 
 **What it does**:

@@ -12,7 +12,7 @@ requests>=2.31.0
 
 # Database
 psycopg2-binary>=2.9.0
-sqlalchemy>=2.0.0
+# Note: Do NOT pin sqlalchemy>=2.0 - Airflow 2.8.x requires SQLAlchemy 1.4.x
 
 # MLflow client
 mlflow>=2.10.0

@@ -18,7 +18,9 @@ with mlflow.start_run():
     mlflow.sklearn.log_model(model, "model")
 ```
 
-**View experiments**: http://localhost:5000
+**View experiments**:
+- Local: http://localhost:5000
+- Cloud Run: https://market-intel-mlflow-1001565765695.us-west1.run.app
 
 ## Model Registry
 
@@ -47,8 +49,13 @@ The FastAPI service provides real-time stock predictions:
 # Start FastAPI server (or use Docker)
 uvicorn src.api.main:app --reload
 
-# Test prediction endpoint
+# Test prediction endpoint (local)
 curl -X POST "http://localhost:8000/predict" \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "AAPL"}'
+
+# Test prediction endpoint (Cloud Run)
+curl -X POST "https://market-intel-api-1001565765695.us-west1.run.app/predict" \
   -H "Content-Type: application/json" \
   -d '{"symbol": "AAPL"}'
 

@@ -95,13 +95,22 @@ open http://localhost:8000
 
 ## Services
 
+### Cloud Run (Production)
+
 | Service | URL | Credentials |
 |---------|-----|-------------|
 | **Live Dashboard** | [market-intel-api...run.app](https://market-intel-api-1001565765695.us-west1.run.app/) | None |
+| Airflow | [market-intel-airflow...run.app](https://market-intel-airflow-1001565765695.us-west1.run.app/) | admin / admin |
+| MLflow | [market-intel-mlflow...run.app](https://market-intel-mlflow-1001565765695.us-west1.run.app/) | None |
+
+### Local Development (Docker Compose)
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| API | http://localhost:8000 | None |
 | Airflow | http://localhost:8080 | airflow / airflow |
 | MLflow | http://localhost:5000 | None |
 | Jupyter | http://localhost:8888 | Token: `jupyter` |
-| API Docs | http://localhost:8000/docs | None |
 
 ## Project Structure
 
@@ -141,6 +150,25 @@ market-intelligence-mvp/
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 | [Contributing](docs/contributing.md) | Development workflow |
 | [Roadmap](docs/roadmap.md) | Implementation plan and progress |
+
+## Cloud Run Deployment
+
+All services are deployed to Google Cloud Run with Cloud SQL (PostgreSQL 15) as the shared database.
+
+```bash
+# Deploy all services
+export GCP_PROJECT_ID=your-project-id
+export GCP_REGION=us-west1
+./scripts/deploy-gcp.sh deploy
+
+# Check status
+./scripts/deploy-gcp.sh status
+
+# Scale to zero (cost savings)
+./scripts/deploy-gcp.sh stop
+```
+
+**Architecture**: API + MLflow + Airflow webserver + Airflow scheduler on Cloud Run, PostgreSQL on Cloud SQL, artifacts on GCS.
 
 ## Roadmap
 

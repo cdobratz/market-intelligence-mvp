@@ -156,32 +156,42 @@ class FeatureCache:
 
 #### 2.1 Container Architecture for Cloud Run
 
-**Goal**: Deploy the full stack to Google Cloud Run with Docker containers
+**Status**: Fully deployed to Google Cloud Run (us-west1, project: n8nclyt)
 
 ```md
-┌─────────────────────────────────────────────────────────────────┐
-│                     Google Cloud Platform                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  Cloud Run   │  │  Cloud Run   │  │  Cloud Run   │          │
-│  │  (Airflow)   │  │  (MLflow)    │  │  (FastAPI)   │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         │                 │                  │                   │
-│         └────────────┬────┴──────────────────┘                   │
-│                      │                                           │
-│              ┌───────▼───────┐                                   │
-│              │  Cloud SQL    │                                   │
-│              │ (PostgreSQL)  │                                   │
-│              └───────────────┘                                   │
-│                                                                   │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ Cloud Storage│  │  Memorystore │  │ Artifact     │          │
-│  │ (Data/Models)│  │  (Redis)     │  │ Registry     │          │
-│  └──────────────┘  └──────────────┘  └──────────────┘          │
-│                                                                   │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                     Google Cloud Platform (us-west1)              │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  ┌────────────────┐ ┌─────────────────┐ ┌──────────────┐        │
+│  │  Cloud Run     │ │  Cloud Run      │ │  Cloud Run   │        │
+│  │  (Airflow Web) │ │  (Airflow Sched)│ │  (FastAPI)   │        │
+│  └──────┬─────────┘ └──────┬──────────┘ └──────┬───────┘        │
+│         │                  │                    │                 │
+│  ┌──────┴──────┐           │                    │                 │
+│  │  Cloud Run  │           │                    │                 │
+│  │  (MLflow)   │           │                    │                 │
+│  └──────┬──────┘           │                    │                 │
+│         └─────────┬────────┴────────────────────┘                 │
+│                   │                                                │
+│           ┌───────▼───────┐                                        │
+│           │  Cloud SQL    │                                        │
+│           │ (PostgreSQL)  │  market-intel-db                       │
+│           └───────────────┘                                        │
+│                                                                    │
+│  ┌──────────────┐  ┌──────────────┐                               │
+│  │ Cloud Storage│  │ Artifact     │                               │
+│  │ (ML Artifacts)│  │ Registry     │                               │
+│  └──────────────┘  └──────────────┘                               │
+│                                                                    │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+**Service URLs**:
+- API: https://market-intel-api-1001565765695.us-west1.run.app
+- Airflow: https://market-intel-airflow-1001565765695.us-west1.run.app (admin/admin)
+- MLflow: https://market-intel-mlflow-1001565765695.us-west1.run.app
+- Scheduler: internal (no public URL needed)
 
 ---
 
@@ -890,6 +900,8 @@ scripts/
 2. **MLflow 3.x Security**: Downgraded to 2.9.2 due to localhost binding issues
 3. **tslearn**: Removed due to Python 3.11 incompatibility
 4. **Docker disk space**: Run `docker system prune -f` periodically
+5. **Airflow + SQLAlchemy**: Do NOT pin `sqlalchemy>=2.0` in requirements-airflow.txt -- Airflow 2.8.x requires SQLAlchemy 1.4.x
+6. **Airflow scheduler on Cloud Run**: Requires 8Gi memory due to ML library imports in DAGs. Uses `--no-cpu-throttling` and `--min-instances=1` for continuous operation
 
 ---
 

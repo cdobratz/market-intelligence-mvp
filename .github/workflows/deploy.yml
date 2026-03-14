@@ -1,0 +1,117 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-west1
+  REGISTRY: us-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/market-intelligence
+  SQL_CONN: ${{ secrets.GCP_PROJECT_ID }}:us-west1:market-intel-db
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Build containers
+        run: |
+          docker build -f docker/Dockerfile.airflow -t $REGISTRY/airflow:$GITHUB_SHA -t $REGISTRY/airflow:latest .
+          docker build -f docker/Dockerfile.mlflow -t $REGISTRY/mlflow:$GITHUB_SHA -t $REGISTRY/mlflow:latest .
+          docker build -f docker/Dockerfile.api -t $REGISTRY/api:$GITHUB_SHA -t $REGISTRY/api:latest .
+
+      - name: Push containers
+        run: |
+          docker push $REGISTRY/airflow:$GITHUB_SHA
+          docker push $REGISTRY/airflow:latest
+          docker push $REGISTRY/mlflow:$GITHUB_SHA
+          docker push $REGISTRY/mlflow:latest
+          docker push $REGISTRY/api:$GITHUB_SHA
+          docker push $REGISTRY/api:latest
+
+      - name: Deploy MLflow
+        run: |
+          gcloud run deploy market-intel-mlflow \
+            --image=$REGISTRY/mlflow:$GITHUB_SHA \
+            --region=$REGION \
+            --platform=managed \
+            --memory=1Gi --cpu=1 \
+            --min-instances=0 --max-instances=1 \
+            --set-env-vars="MLFLOW_BACKEND_URI=postgresql+psycopg2://postgres:postgres@/mlflow?host=/cloudsql/$SQL_CONN,MLFLOW_ARTIFACT_ROOT=gs://$PROJECT_ID-ml-artifacts" \
+            --add-cloudsql-instances=$SQL_CONN \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Get MLflow URL
+        id: mlflow
+        run: |
+          echo "url=$(gcloud run services describe market-intel-mlflow --region=$REGION --format='value(status.url)')" >> $GITHUB_OUTPUT
+
+      - name: Deploy Airflow webserver
+        run: |
+          gcloud run deploy market-intel-airflow \
+            --image=$REGISTRY/airflow:$GITHUB_SHA \
+            --region=$REGION \
+            --platform=managed \
+            --memory=2Gi --cpu=2 \
+            --min-instances=0 --max-instances=1 \
+            --timeout=3600 \
+            --set-env-vars="AIRFLOW_MODE=webserver,AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@/airflow?host=/cloudsql/$SQL_CONN,AIRFLOW__CORE__EXECUTOR=LocalExecutor,AIRFLOW__CORE__LOAD_EXAMPLES=False,AIRFLOW__WEBSERVER__SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }},AIRFLOW_WWW_USER_USERNAME=admin,AIRFLOW_WWW_USER_PASSWORD=${{ secrets.AIRFLOW_ADMIN_PASSWORD }},AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,MLFLOW_TRACKING_URI=${{ steps.mlflow.outputs.url }}" \
+            --add-cloudsql-instances=$SQL_CONN \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Deploy Airflow scheduler
+        run: |
+          gcloud run deploy market-intel-airflow-scheduler \
+            --image=$REGISTRY/airflow:$GITHUB_SHA \
+            --region=$REGION \
+            --platform=managed \
+            --memory=8Gi --cpu=4 \
+            --min-instances=1 --max-instances=1 \
+            --timeout=3600 \
+            --no-cpu-throttling \
+            --set-env-vars="AIRFLOW_MODE=scheduler,AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@/airflow?host=/cloudsql/$SQL_CONN,AIRFLOW__CORE__EXECUTOR=LocalExecutor,AIRFLOW__CORE__LOAD_EXAMPLES=False,AIRFLOW__WEBSERVER__SECRET_KEY=${{ secrets.AIRFLOW_SECRET_KEY }},MLFLOW_TRACKING_URI=${{ steps.mlflow.outputs.url }}" \
+            --add-cloudsql-instances=$SQL_CONN \
+            --no-allow-unauthenticated \
+            --quiet
+
+      - name: Deploy API
+        run: |
+          gcloud run deploy market-intel-api \
+            --image=$REGISTRY/api:$GITHUB_SHA \
+            --region=$REGION \
+            --platform=managed \
+            --memory=2Gi --cpu=2 \
+            --min-instances=0 --max-instances=10 \
+            --set-env-vars="DEMO_MODE=true,MLFLOW_TRACKING_URI=${{ steps.mlflow.outputs.url }}" \
+            --allow-unauthenticated \
+            --quiet
+
+      - name: Verify deployment
+        run: |
+          echo "Service URLs:"
+          for svc in market-intel-api market-intel-mlflow market-intel-airflow; do
+            url=$(gcloud run services describe $svc --region=$REGION --format='value(status.url)')
+            status=$(curl -s -o /dev/null -w '%{http_code}' $url/)
+            echo "  $svc: $url ($status)"
+          done

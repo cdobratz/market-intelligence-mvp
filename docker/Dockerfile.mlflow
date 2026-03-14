@@ -13,9 +13,4 @@ RUN pip install --no-cache-dir \
 # Cloud Run expects port 8080
 EXPOSE 8080
 
-# Use shell form to expand environment variables
-CMD mlflow server \
-    --host 0.0.0.0 \
-    --port 8080 \
-    --backend-store-uri ${MLFLOW_BACKEND_URI:-sqlite:///mlflow.db} \
-    --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-./mlartifacts}
+CMD ["sh", "-c", "mlflow server --host 0.0.0.0 --port 8080 --backend-store-uri ${MLFLOW_BACKEND_URI:-sqlite:///mlflow.db} --default-artifact-root ${MLFLOW_ARTIFACT_ROOT:-./mlartifacts}"]
